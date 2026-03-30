@@ -1,6 +1,9 @@
 package org.shjoo.flighttrack.controller
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import io.swagger.v3.oas.annotations.Operation
+import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.tags.Tag
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
@@ -13,6 +16,7 @@ import org.springframework.web.reactive.function.client.awaitBodyOrNull
 
 @RestController
 @RequestMapping("/api/tracking")
+@Tag(name = "Tracking", description = "실시간 항공기 추적 API")
 class TrackingController {
     private val log = LoggerFactory.getLogger(TrackingController::class.java)
 
@@ -32,11 +36,12 @@ class TrackingController {
     private val TRACK_CACHE_MS = 30_000L // 30 seconds
 
     @GetMapping("/aircraft")
+    @Operation(summary = "실시간 항공기 위치 조회", description = "OpenSky Network에서 실시간 항공기 위치를 조회합니다. 30초 캐시 적용")
     suspend fun getAircraft(
-        @RequestParam(required = false) lamin: Double?,
-        @RequestParam(required = false) lomin: Double?,
-        @RequestParam(required = false) lamax: Double?,
-        @RequestParam(required = false) lomax: Double?
+        @Parameter(description = "최소 위도") @RequestParam(required = false) lamin: Double?,
+        @Parameter(description = "최소 경도") @RequestParam(required = false) lomin: Double?,
+        @Parameter(description = "최대 위도") @RequestParam(required = false) lamax: Double?,
+        @Parameter(description = "최대 경도") @RequestParam(required = false) lomax: Double?
     ): AircraftResponse {
         val now = System.currentTimeMillis()
 
@@ -113,7 +118,10 @@ class TrackingController {
     }
 
     @GetMapping("/track")
-    suspend fun getTrack(@RequestParam icao24: String): TrackResponse {
+    @Operation(summary = "항공기 비행 경로 조회", description = "특정 항공기의 비행 경로(waypoint)를 조회합니다. 30초 캐시 적용")
+    suspend fun getTrack(
+        @Parameter(description = "항공기 ICAO24 hex 코드", example = "abc123") @RequestParam icao24: String
+    ): TrackResponse {
         val now = System.currentTimeMillis()
         val key = icao24.lowercase()
 
