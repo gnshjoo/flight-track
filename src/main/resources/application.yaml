@@ -1,3 +1,11 @@
 spring:
   application:
     name: flight-track
+
+server:
+  port: 8080
+
+amadeus:
+  client-id: ${AMADEUS_CLIENT_ID:test-client-id}
+  client-secret: ${AMADEUS_CLIENT_SECRET:test-client-secret}
+  base-url: ${AMADEUS_BASE_URL:https://test.api.amadeus.com}
