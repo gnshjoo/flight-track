@@ -1,7 +1,6 @@
-package org.shjoo.flighttrack.dto
+package org.shjoo.flighttrack.adapter.out.amadeus.dto
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.annotation.JsonProperty
 
 // --- Flight Inspiration Search ---
 
@@ -102,3 +101,14 @@ data class AmadeusGeoCode(
     val latitude: Double = 0.0,
     val longitude: Double = 0.0
 )
+
+// --- Auth ---
+
+data class AmadeusTokenResponse(
+    val access_token: String = "",
+    val token_type: String = "",
+    val expires_in: Int = 0
+) {
+    val accessToken: String get() = access_token
+    val expiresIn: Int get() = expires_in
+}

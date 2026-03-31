@@ -1,21 +1,22 @@
 package org.shjoo.flighttrack.service
 
-import org.shjoo.flighttrack.dto.FlightResponse
-import org.shjoo.flighttrack.dto.Leg
+import org.shjoo.flighttrack.adapter.out.cache.InMemoryFlightCacheAdapter
+import org.shjoo.flighttrack.domain.model.Flight
+import org.shjoo.flighttrack.domain.model.Leg
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 class CacheServiceTest {
 
-    private lateinit var cache: CacheService
+    private lateinit var cache: InMemoryFlightCacheAdapter
 
     @BeforeEach
     fun setUp() {
-        cache = CacheService()
+        cache = InMemoryFlightCacheAdapter()
     }
 
-    private fun sampleFlight(destination: String = "Bangkok", price: Int = 189) = FlightResponse(
+    private fun sampleFlight(destination: String = "Bangkok", price: Int = 189) = Flight(
         destination = destination,
         iata = "BKK",
         lat = 13.69,
@@ -49,7 +50,6 @@ class CacheServiceTest {
 
     @Test
     fun `evictExpired removes old entries`() {
-        // Put an entry, then evict — fresh entry should survive
         cache.put("fresh", listOf(sampleFlight()))
         cache.evictExpired()
         assertNotNull(cache.get("fresh"))

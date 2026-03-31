@@ -1,11 +1,26 @@
-package org.shjoo.flighttrack.fallback
+package org.shjoo.flighttrack.adapter.out.fallback
 
-import org.shjoo.flighttrack.dto.FlightResponse
-import org.shjoo.flighttrack.dto.Leg
+import org.shjoo.flighttrack.domain.model.Flight
+import org.shjoo.flighttrack.domain.model.Leg
+import org.shjoo.flighttrack.domain.port.out.FlightFallbackPort
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
 
-object FallbackData {
+@Component
+class FallbackFlightAdapter : FlightFallbackPort {
 
-    fun getSeoulFallback(): List<FlightResponse> = listOf(
+    private val log = LoggerFactory.getLogger(FallbackFlightAdapter::class.java)
+
+    override fun getFallback(from: String): List<Flight> {
+        log.info("Using fallback data for from=$from")
+        return if (from.equals("ICN", ignoreCase = true)) {
+            getSeoulFallback()
+        } else {
+            emptyList()
+        }
+    }
+
+    private fun getSeoulFallback(): List<Flight> = listOf(
         flight("Bangkok", "BKK", 13.6900, 100.7501, 189, 320, listOf(
             leg("ICN", "BKK", "AirAsia X", 189, "08:00", "12:30")
         )),
@@ -109,23 +124,10 @@ object FallbackData {
     )
 
     private fun flight(
-        destination: String,
-        iata: String,
-        lat: Double,
-        lng: Double,
-        price: Int,
-        directPrice: Int?,
-        legs: List<Leg>
-    ) = FlightResponse(
-        destination = destination,
-        iata = iata,
-        lat = lat,
-        lng = lng,
-        price = price,
-        directPrice = directPrice,
-        legs = legs,
-        deepLink = null
-    )
+        destination: String, iata: String, lat: Double, lng: Double,
+        price: Int, directPrice: Int?, legs: List<Leg>
+    ) = Flight(destination = destination, iata = iata, lat = lat, lng = lng,
+        price = price, directPrice = directPrice, legs = legs, deepLink = null)
 
     private fun leg(from: String, to: String, airline: String, price: Int, dep: String, arr: String) =
         Leg(from = from, to = to, airline = airline, price = price, departureTime = dep, arrivalTime = arr)

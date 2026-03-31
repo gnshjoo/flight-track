@@ -1,6 +1,6 @@
-package org.shjoo.flighttrack.dto
+package org.shjoo.flighttrack.domain.model
 
-data class FlightResponse(
+data class Flight(
     val destination: String,
     val iata: String,
     val lat: Double,

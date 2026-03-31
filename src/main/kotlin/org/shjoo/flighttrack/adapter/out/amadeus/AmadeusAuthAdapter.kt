@@ -1,20 +1,21 @@
-package org.shjoo.flighttrack.service
+package org.shjoo.flighttrack.adapter.out.amadeus
 
+import org.shjoo.flighttrack.adapter.out.amadeus.dto.AmadeusTokenResponse
 import org.shjoo.flighttrack.config.AmadeusConfig
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
-import org.springframework.stereotype.Service
+import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBodyOrNull
 import java.util.concurrent.atomic.AtomicReference
 
-@Service
-class AmadeusAuthService(
+@Component
+class AmadeusAuthAdapter(
     private val amadeusConfig: AmadeusConfig,
     private val amadeusWebClient: WebClient
 ) {
-    private val log = LoggerFactory.getLogger(AmadeusAuthService::class.java)
+    private val log = LoggerFactory.getLogger(AmadeusAuthAdapter::class.java)
 
     private data class TokenInfo(
         val accessToken: String,
@@ -53,13 +54,4 @@ class AmadeusAuthService(
         log.info("Amadeus token refreshed, expires in ${response.expiresIn}s")
         return tokenInfo.accessToken
     }
-}
-
-data class AmadeusTokenResponse(
-    val access_token: String = "",
-    val token_type: String = "",
-    val expires_in: Int = 0
-) {
-    val accessToken: String get() = access_token
-    val expiresIn: Int get() = expires_in
 }

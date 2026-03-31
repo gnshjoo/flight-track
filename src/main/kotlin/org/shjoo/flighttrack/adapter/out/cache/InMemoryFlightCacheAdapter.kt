@@ -1,22 +1,23 @@
-package org.shjoo.flighttrack.service
+package org.shjoo.flighttrack.adapter.out.cache
 
-import org.shjoo.flighttrack.dto.FlightResponse
+import org.shjoo.flighttrack.domain.model.Flight
+import org.shjoo.flighttrack.domain.port.out.FlightCachePort
 import org.springframework.scheduling.annotation.Scheduled
-import org.springframework.stereotype.Service
+import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
 
-@Service
-class CacheService {
+@Component
+class InMemoryFlightCacheAdapter : FlightCachePort {
 
     private data class CacheEntry(
-        val data: List<FlightResponse>,
+        val data: List<Flight>,
         val timestamp: Long
     )
 
     private val cache = ConcurrentHashMap<String, CacheEntry>()
-    private val ttlMs = 10 * 60 * 1000L // 10 minutes
+    private val ttlMs = 10 * 60 * 1000L
 
-    fun get(key: String): List<FlightResponse>? {
+    override fun get(key: String): List<Flight>? {
         val entry = cache[key] ?: return null
         if (System.currentTimeMillis() - entry.timestamp > ttlMs) {
             cache.remove(key)
@@ -25,14 +26,14 @@ class CacheService {
         return entry.data
     }
 
-    fun put(key: String, data: List<FlightResponse>) {
+    override fun put(key: String, data: List<Flight>) {
         cache[key] = CacheEntry(data, System.currentTimeMillis())
     }
 
-    fun buildKey(from: String, dateFrom: String, dateTo: String): String =
+    override fun buildKey(from: String, dateFrom: String, dateTo: String): String =
         "$from|$dateFrom|$dateTo"
 
-    @Scheduled(fixedRate = 600_000) // every 10 minutes
+    @Scheduled(fixedRate = 600_000)
     fun evictExpired() {
         val now = System.currentTimeMillis()
         cache.entries.removeIf { now - it.value.timestamp > ttlMs }
