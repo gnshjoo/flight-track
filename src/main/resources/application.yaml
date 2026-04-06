@@ -6,5 +6,5 @@ server:
   port: 8080
 
 opensky:
-  username: davidjoo-api-client
-  password: DsJnd7gQrCai3h8v23juLaVbP4eoh9J7
+  username:
+  password:
