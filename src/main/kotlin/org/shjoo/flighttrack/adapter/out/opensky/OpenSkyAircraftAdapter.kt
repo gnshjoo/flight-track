@@ -37,7 +37,7 @@ class OpenSkyAircraftAdapter(
             .responseTimeout(Duration.ofSeconds(30))
 
         val builder = WebClient.builder()
-            .baseUrl("https://opensky-network.org")
+            .baseUrl(openSkyConfig.baseUrl)
             .clientConnector(ReactorClientHttpConnector(httpClient))
             .codecs { it.defaultCodecs().maxInMemorySize(10 * 1024 * 1024) }
 

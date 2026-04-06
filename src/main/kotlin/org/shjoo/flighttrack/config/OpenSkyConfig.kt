@@ -4,6 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 
 @ConfigurationProperties(prefix = "opensky")
 data class OpenSkyConfig(
+    val baseUrl: String = "https://opensky-network.org",
     val username: String = "",
     val password: String = ""
 ) {
