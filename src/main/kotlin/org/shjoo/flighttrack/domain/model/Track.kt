@@ -3,7 +3,9 @@ package org.shjoo.flighttrack.domain.model
 data class Track(
     val icao24: String,
     val callsign: String,
-    val path: List<TrackWaypoint>
+    val path: List<TrackWaypoint>,
+    val estDepartureAirport: String? = null,
+    val estArrivalAirport: String? = null
 )
 
 data class TrackWaypoint(

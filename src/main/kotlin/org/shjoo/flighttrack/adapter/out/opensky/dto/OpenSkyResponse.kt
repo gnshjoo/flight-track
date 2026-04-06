@@ -16,3 +16,13 @@ data class OpenSkyTrackResponse(
     val endTime: Long = 0,
     val path: List<List<Any?>>? = null
 )
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class OpenSkyFlightResponse(
+    val icao24: String = "",
+    val callsign: String? = null,
+    val estDepartureAirport: String? = null,
+    val estArrivalAirport: String? = null,
+    val firstSeen: Long = 0,
+    val lastSeen: Long = 0
+)

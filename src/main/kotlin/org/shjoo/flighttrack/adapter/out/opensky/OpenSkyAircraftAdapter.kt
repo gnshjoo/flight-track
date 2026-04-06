@@ -2,8 +2,10 @@ package org.shjoo.flighttrack.adapter.out.opensky
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.shjoo.flighttrack.adapter.out.openflights.RouteResolver
 import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyStatesResponse
 import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyTrackResponse
+import org.shjoo.flighttrack.config.OpenSkyConfig
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
 import org.shjoo.flighttrack.domain.model.AircraftState
 import org.shjoo.flighttrack.domain.model.Track
@@ -11,19 +13,43 @@ import org.shjoo.flighttrack.domain.model.TrackWaypoint
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackPort
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackingPort
 import org.slf4j.LoggerFactory
+import io.netty.channel.ChannelOption
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBodyOrNull
+import reactor.netty.http.client.HttpClient
+import java.time.Duration
 
 @Component
-class OpenSkyAircraftAdapter : AircraftTrackingPort, AircraftTrackPort {
+@EnableConfigurationProperties(OpenSkyConfig::class)
+class OpenSkyAircraftAdapter(
+    private val openSkyConfig: OpenSkyConfig,
+    private val routeResolver: RouteResolver
+) : AircraftTrackingPort, AircraftTrackPort {
 
     private val log = LoggerFactory.getLogger(OpenSkyAircraftAdapter::class.java)
 
-    private val openskyClient = WebClient.builder()
-        .baseUrl("https://opensky-network.org")
-        .codecs { it.defaultCodecs().maxInMemorySize(10 * 1024 * 1024) }
-        .build()
+    private val openskyClient: WebClient by lazy {
+        val httpClient = HttpClient.create()
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+            .responseTimeout(Duration.ofSeconds(30))
+
+        val builder = WebClient.builder()
+            .baseUrl("https://opensky-network.org")
+            .clientConnector(ReactorClientHttpConnector(httpClient))
+            .codecs { it.defaultCodecs().maxInMemorySize(10 * 1024 * 1024) }
+
+        if (openSkyConfig.hasCredentials) {
+            builder.defaultHeaders { it.setBasicAuth(openSkyConfig.username, openSkyConfig.password) }
+            log.info("OpenSky Network: authenticated as ${openSkyConfig.username}")
+        } else {
+            log.info("OpenSky Network: running without credentials (rate-limited)")
+        }
+
+        builder.build()
+    }
 
     @Volatile private var cachedSnapshot: AircraftSnapshot? = null
     @Volatile private var cachedSnapshotTime: Long = 0
@@ -132,10 +158,20 @@ class OpenSkyAircraftAdapter : AircraftTrackingPort, AircraftTrackPort {
                 )
             }
 
+            // Resolve departure/arrival airports via callsign + waypoints + route DB
+            val callsign = response.callsign?.trim() ?: ""
+            val (depAirport, arrAirport) = routeResolver.resolveRoute(
+                callsign = callsign,
+                waypoints = waypoints
+            )
+            log.info("Route resolved for $key (callsign=$callsign): dep=$depAirport, arr=$arrAirport")
+
             val result = Track(
                 icao24 = response.icao24,
                 callsign = response.callsign?.trim() ?: "",
-                path = waypoints
+                path = waypoints,
+                estDepartureAirport = depAirport,
+                estArrivalAirport = arrAirport
             )
             cachedTracks[key] = now to result
 
@@ -150,4 +186,5 @@ class OpenSkyAircraftAdapter : AircraftTrackingPort, AircraftTrackPort {
             cachedTracks[key]?.second ?: Track(icao24 = icao24, callsign = "", path = emptyList())
         }
     }
+
 }
