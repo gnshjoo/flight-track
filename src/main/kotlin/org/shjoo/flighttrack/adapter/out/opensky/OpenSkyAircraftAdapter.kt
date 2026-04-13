@@ -1,5 +1,6 @@
 package org.shjoo.flighttrack.adapter.out.opensky
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.shjoo.flighttrack.adapter.out.openflights.RouteResolver
@@ -36,8 +37,8 @@ class OpenSkyAircraftAdapter(
 
     private val openskyClient: WebClient by lazy {
         val httpClient = HttpClient.create()
-            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
-            .responseTimeout(Duration.ofSeconds(30))
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30_000)
+            .responseTimeout(Duration.ofSeconds(60))
 
         val builder = WebClient.builder()
             .baseUrl(openSkyConfig.baseUrl)
@@ -56,11 +57,13 @@ class OpenSkyAircraftAdapter(
 
     @Volatile private var cachedSnapshot: AircraftSnapshot? = null
     @Volatile private var cachedSnapshotTime: Long = 0
-    private val SNAPSHOT_CACHE_MS = 30_000L
+    private val SNAPSHOT_CACHE_MS = 300_000L // 5분 캐시 — API 호출 최소화
     private val fetchMutex = Mutex()
+    private val MAX_RETRIES = 3
+    private val RETRY_DELAY_MS = 3_000L
 
     @Volatile private var cachedTracks = mutableMapOf<String, Pair<Long, Track>>()
-    private val TRACK_CACHE_MS = 30_000L
+    private val TRACK_CACHE_MS = 300_000L // 5분 캐시
 
     @Volatile private var cachedMetadata = mutableMapOf<String, Pair<Long, AircraftInfo?>>()
     private val METADATA_CACHE_MS = 300_000L // 5분 캐시 (메타데이터는 잘 안 변함)
@@ -79,49 +82,56 @@ class OpenSkyAircraftAdapter(
                 return@withLock freshCached
             }
 
-            try {
-                val response = openskyClient.get()
-                    .uri { it.path("/api/states/all").build() }
-                    .retrieve()
-                    .awaitBodyOrNull<OpenSkyStatesResponse>()
+            var lastException: Exception? = null
+            for (attempt in 1..MAX_RETRIES) {
+                try {
+                    val response = openskyClient.get()
+                        .uri { it.path("/api/states/all").build() }
+                        .retrieve()
+                        .awaitBodyOrNull<OpenSkyStatesResponse>()
 
-                val fetchTime = System.currentTimeMillis()
+                    val fetchTime = System.currentTimeMillis()
 
-                if (response?.states == null) {
-                    val empty = AircraftSnapshot(time = fetchTime / 1000, aircraft = emptyList())
-                    cachedSnapshot = empty
+                    if (response?.states == null) {
+                        val empty = AircraftSnapshot(time = fetchTime / 1000, aircraft = emptyList())
+                        cachedSnapshot = empty
+                        cachedSnapshotTime = fetchTime
+                        return@withLock empty
+                    }
+
+                    val aircraft = response.states
+                        .filter { state ->
+                            state.size > 11 &&
+                            state[5] != null && state[6] != null &&
+                            state[8] == false
+                        }
+                        .map { state ->
+                            AircraftState(
+                                icao24 = state[0] as? String ?: "",
+                                callsign = (state[1] as? String)?.trim() ?: "",
+                                originCountry = state[2] as? String ?: "",
+                                longitude = (state[5] as? Number)?.toDouble() ?: 0.0,
+                                latitude = (state[6] as? Number)?.toDouble() ?: 0.0,
+                                altitude = (state[7] as? Number)?.toDouble(),
+                                velocity = (state[9] as? Number)?.toDouble(),
+                                heading = (state[10] as? Number)?.toDouble(),
+                                verticalRate = (state[11] as? Number)?.toDouble()
+                            )
+                        }
+
+                    val result = AircraftSnapshot(time = response.time, aircraft = aircraft)
+                    cachedSnapshot = result
                     cachedSnapshotTime = fetchTime
-                    return@withLock empty
+                    if (attempt > 1) log.info("OpenSky API succeeded on attempt $attempt")
+                    return@withLock result
+                } catch (e: Exception) {
+                    lastException = e
+                    log.warn("OpenSky API attempt $attempt/$MAX_RETRIES failed: ${e.message}")
+                    if (attempt < MAX_RETRIES) delay(RETRY_DELAY_MS * attempt)
                 }
-
-                val aircraft = response.states
-                    .filter { state ->
-                        state.size > 11 &&
-                        state[5] != null && state[6] != null &&
-                        state[8] == false
-                    }
-                    .map { state ->
-                        AircraftState(
-                            icao24 = state[0] as? String ?: "",
-                            callsign = (state[1] as? String)?.trim() ?: "",
-                            originCountry = state[2] as? String ?: "",
-                            longitude = (state[5] as? Number)?.toDouble() ?: 0.0,
-                            latitude = (state[6] as? Number)?.toDouble() ?: 0.0,
-                            altitude = (state[7] as? Number)?.toDouble(),
-                            velocity = (state[9] as? Number)?.toDouble(),
-                            heading = (state[10] as? Number)?.toDouble(),
-                            verticalRate = (state[11] as? Number)?.toDouble()
-                        )
-                    }
-
-                val result = AircraftSnapshot(time = response.time, aircraft = aircraft)
-                cachedSnapshot = result
-                cachedSnapshotTime = fetchTime
-                result
-            } catch (e: Exception) {
-                log.error("OpenSky API failed: ${e.message}")
-                cachedSnapshot ?: AircraftSnapshot(time = System.currentTimeMillis() / 1000, aircraft = emptyList())
             }
+            log.error("OpenSky API failed after $MAX_RETRIES attempts: ${lastException?.message}")
+            cachedSnapshot ?: AircraftSnapshot(time = System.currentTimeMillis() / 1000, aircraft = emptyList())
         }
     }
 
