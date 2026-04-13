@@ -7,7 +7,7 @@ import org.shjoo.flighttrack.adapter.out.openflights.RouteResolver
 import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyStatesResponse
 import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyTrackResponse
 import org.shjoo.flighttrack.config.OpenSkyConfig
-import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyAircraftMetadataResponse
+import org.shjoo.flighttrack.adapter.out.opensky.dto.HexDbAircraftResponse
 import org.shjoo.flighttrack.domain.model.AircraftInfo
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
 import org.shjoo.flighttrack.domain.model.AircraftState
@@ -203,30 +203,41 @@ class OpenSkyAircraftAdapter(
         }
     }
 
+    private val hexDbClient: WebClient by lazy {
+        WebClient.builder()
+            .baseUrl("https://hexdb.io")
+            .clientConnector(ReactorClientHttpConnector(
+                HttpClient.create()
+                    .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+                    .responseTimeout(Duration.ofSeconds(10))
+            ))
+            .build()
+    }
+
     override suspend fun fetchAircraftMetadata(icao24: String): AircraftInfo? {
         val now = System.currentTimeMillis()
-        val key = icao24.lowercase()
+        val key = icao24.uppercase()
 
         cachedMetadata[key]?.let { (ts, info) ->
             if ((now - ts) < METADATA_CACHE_MS) return info
         }
 
         return try {
-            val response = openskyClient.get()
-                .uri { it.path("/api/metadata/aircraft/icao24/$key").build() }
+            val response = hexDbClient.get()
+                .uri("/api/v1/aircraft/$key")
                 .retrieve()
-                .awaitBodyOrNull<OpenSkyAircraftMetadataResponse>()
+                .awaitBodyOrNull<HexDbAircraftResponse>()
 
             val info = response?.let {
                 AircraftInfo(
-                    icao24 = it.icao24.ifBlank { key },
-                    registration = it.registration,
-                    manufacturerName = it.manufacturerName,
-                    model = it.model,
-                    operator = it.operator,
-                    owner = it.owner,
-                    built = it.built,
-                    categoryDescription = it.categoryDescription
+                    icao24 = it.ModeS.ifBlank { key },
+                    registration = it.Registration?.ifBlank { null },
+                    manufacturerName = it.Manufacturer?.ifBlank { null },
+                    model = it.Type?.ifBlank { null },
+                    operator = it.RegisteredOwners?.ifBlank { null },
+                    owner = null,
+                    built = null,
+                    categoryDescription = it.ICAOTypeCode?.ifBlank { null }
                 )
             }
 
@@ -239,7 +250,7 @@ class OpenSkyAircraftAdapter(
 
             info
         } catch (e: Exception) {
-            log.error("OpenSky metadata fetch failed for $icao24: ${e.message}")
+            log.error("HexDB metadata fetch failed for $icao24: ${e.message}")
             cachedMetadata[key]?.second
         }
     }

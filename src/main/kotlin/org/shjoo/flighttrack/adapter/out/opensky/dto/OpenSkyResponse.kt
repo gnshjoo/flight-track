@@ -28,13 +28,12 @@ data class OpenSkyFlightResponse(
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class OpenSkyAircraftMetadataResponse(
-    val icao24: String = "",
-    val registration: String? = null,
-    val manufacturerName: String? = null,
-    val model: String? = null,
-    val operator: String? = null,
-    val owner: String? = null,
-    val built: String? = null,
-    val categoryDescription: String? = null
+data class HexDbAircraftResponse(
+    val ModeS: String = "",
+    val Registration: String? = null,
+    val Manufacturer: String? = null,
+    val ICAOTypeCode: String? = null,
+    val Type: String? = null,
+    val RegisteredOwners: String? = null,
+    val OperatorFlagCode: String? = null
 )
