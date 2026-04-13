@@ -16,3 +16,14 @@ data class AircraftState(
     val heading: Double?,
     val verticalRate: Double?
 )
+
+data class AircraftInfo(
+    val icao24: String,
+    val registration: String?,
+    val manufacturerName: String?,
+    val model: String?,
+    val operator: String?,
+    val owner: String?,
+    val built: String?,
+    val categoryDescription: String?
+)

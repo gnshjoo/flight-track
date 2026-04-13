@@ -26,3 +26,15 @@ data class OpenSkyFlightResponse(
     val firstSeen: Long = 0,
     val lastSeen: Long = 0
 )
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class OpenSkyAircraftMetadataResponse(
+    val icao24: String = "",
+    val registration: String? = null,
+    val manufacturerName: String? = null,
+    val model: String? = null,
+    val operator: String? = null,
+    val owner: String? = null,
+    val built: String? = null,
+    val categoryDescription: String? = null
+)

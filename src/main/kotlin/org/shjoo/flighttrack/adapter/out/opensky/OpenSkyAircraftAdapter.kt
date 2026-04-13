@@ -6,10 +6,13 @@ import org.shjoo.flighttrack.adapter.out.openflights.RouteResolver
 import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyStatesResponse
 import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyTrackResponse
 import org.shjoo.flighttrack.config.OpenSkyConfig
+import org.shjoo.flighttrack.adapter.out.opensky.dto.OpenSkyAircraftMetadataResponse
+import org.shjoo.flighttrack.domain.model.AircraftInfo
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
 import org.shjoo.flighttrack.domain.model.AircraftState
 import org.shjoo.flighttrack.domain.model.Track
 import org.shjoo.flighttrack.domain.model.TrackWaypoint
+import org.shjoo.flighttrack.domain.port.out.AircraftMetadataPort
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackPort
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackingPort
 import org.slf4j.LoggerFactory
@@ -27,7 +30,7 @@ import java.time.Duration
 class OpenSkyAircraftAdapter(
     private val openSkyConfig: OpenSkyConfig,
     private val routeResolver: RouteResolver
-) : AircraftTrackingPort, AircraftTrackPort {
+) : AircraftTrackingPort, AircraftTrackPort, AircraftMetadataPort {
 
     private val log = LoggerFactory.getLogger(OpenSkyAircraftAdapter::class.java)
 
@@ -58,6 +61,9 @@ class OpenSkyAircraftAdapter(
 
     @Volatile private var cachedTracks = mutableMapOf<String, Pair<Long, Track>>()
     private val TRACK_CACHE_MS = 30_000L
+
+    @Volatile private var cachedMetadata = mutableMapOf<String, Pair<Long, AircraftInfo?>>()
+    private val METADATA_CACHE_MS = 300_000L // 5분 캐시 (메타데이터는 잘 안 변함)
 
     override suspend fun fetchAllAircraft(): AircraftSnapshot {
         val now = System.currentTimeMillis()
@@ -184,6 +190,47 @@ class OpenSkyAircraftAdapter(
         } catch (e: Exception) {
             log.error("OpenSky track fetch failed for $icao24: ${e.message}")
             cachedTracks[key]?.second ?: Track(icao24 = icao24, callsign = "", path = emptyList())
+        }
+    }
+
+    override suspend fun fetchAircraftMetadata(icao24: String): AircraftInfo? {
+        val now = System.currentTimeMillis()
+        val key = icao24.lowercase()
+
+        cachedMetadata[key]?.let { (ts, info) ->
+            if ((now - ts) < METADATA_CACHE_MS) return info
+        }
+
+        return try {
+            val response = openskyClient.get()
+                .uri { it.path("/api/metadata/aircraft/icao24/$key").build() }
+                .retrieve()
+                .awaitBodyOrNull<OpenSkyAircraftMetadataResponse>()
+
+            val info = response?.let {
+                AircraftInfo(
+                    icao24 = it.icao24.ifBlank { key },
+                    registration = it.registration,
+                    manufacturerName = it.manufacturerName,
+                    model = it.model,
+                    operator = it.operator,
+                    owner = it.owner,
+                    built = it.built,
+                    categoryDescription = it.categoryDescription
+                )
+            }
+
+            cachedMetadata[key] = now to info
+
+            if (cachedMetadata.size > 200) {
+                val cutoff = now - METADATA_CACHE_MS * 2
+                cachedMetadata.entries.removeIf { it.value.first < cutoff }
+            }
+
+            info
+        } catch (e: Exception) {
+            log.error("OpenSky metadata fetch failed for $icao24: ${e.message}")
+            cachedMetadata[key]?.second
         }
     }
 
