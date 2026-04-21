@@ -23,50 +23,16 @@ class RouteResolver {
     // airport IATA → airport name
     private val airportNames = mutableMapOf<String, String>()
 
-    // airport IATA → (lat, lng)
-    private val airportCoords = mapOf(
-        "BKK" to (13.6900 to 100.7501), "MNL" to (14.5995 to 120.9842),
-        "SGN" to (10.8231 to 106.6297), "NRT" to (35.7720 to 140.3929),
-        "KIX" to (34.4347 to 135.2440), "TPE" to (25.0797 to 121.2342),
-        "HKG" to (22.3080 to 113.9185), "SIN" to (1.3644 to 103.9915),
-        "KUL" to (2.7456 to 101.7099), "IST" to (41.2753 to 28.7519),
-        "LHR" to (51.4700 to -0.4543), "CDG" to (49.0097 to 2.5479),
-        "FCO" to (41.8003 to 12.2389), "BCN" to (41.2974 to 2.0833),
-        "DXB" to (25.2532 to 55.3657), "SYD" to (-33.9399 to 151.1753),
-        "HAN" to (21.2187 to 105.8044), "DPS" to (-8.7467 to 115.1670),
-        "DAD" to (16.0439 to 108.1989), "FUK" to (33.5902 to 130.4017),
-        "CTS" to (42.7752 to 141.6922), "PEK" to (40.0799 to 116.6031),
-        "PVG" to (31.1443 to 121.8083), "BOM" to (19.0896 to 72.8656),
-        "DEL" to (28.5562 to 77.1000), "VVO" to (43.3950 to 132.1444),
-        "GUM" to (13.4835 to 144.7961), "PNH" to (11.5464 to 104.8440),
-        "CEB" to (10.3075 to 123.9794), "CNX" to (18.7669 to 98.9625),
-        "ICN" to (37.4602 to 126.4407), "JFK" to (40.6413 to -73.7781),
-        "LAX" to (33.9416 to -118.4085), "ORD" to (41.9742 to -87.9073),
-        "ATL" to (33.6407 to -84.4277), "DFW" to (32.8998 to -97.0403),
-        "FRA" to (50.0379 to 8.5622), "AMS" to (52.3105 to 4.7683),
-        "MAD" to (40.4983 to -3.5676), "MUC" to (48.3537 to 11.7750),
-        "DOH" to (25.2731 to 51.6081), "HND" to (35.5494 to 139.7798),
-        "SFO" to (37.6213 to -122.3790), "MIA" to (25.7959 to -80.2870),
-        "YYZ" to (43.6777 to -79.6248), "MEX" to (19.4361 to -99.0719),
-        "GRU" to (-23.4356 to -46.4731), "EZE" to (-34.8222 to -58.5358),
-        "JNB" to (-26.1392 to 28.2460), "CAI" to (30.1219 to 31.4056),
-        "NBO" to (-1.3192 to 36.9278), "ADD" to (8.9779 to 38.7993),
-        "GMP" to (37.5583 to 126.7906), "ITM" to (34.7855 to 135.4380),
-        "OKA" to (26.1958 to 127.6459), "CJU" to (33.5114 to 126.4929),
-        "PUS" to (35.1795 to 128.9382), "TAE" to (35.8941 to 128.6559),
-        "CJJ" to (36.7166 to 127.4991), "KWJ" to (35.1264 to 126.8089),
-        "RSU" to (34.8424 to 127.6161), "USN" to (35.5935 to 129.3519),
-        "WJU" to (37.4383 to 127.9601), "MWX" to (34.9914 to 126.3828),
-        "HIN" to (35.0886 to 128.0703), "YNY" to (38.0613 to 128.6692)
-    )
+    // airport IATA → (lat, lng), loaded from OpenFlights airports.dat
+    private val airportCoords = mutableMapOf<String, Pair<Double, Double>>()
 
     @PostConstruct
     fun init() {
         try {
             loadAirlines()
             loadRoutes()
-            loadAirportNames()
-            log.info("RouteResolver loaded: ${airlineIcaoToIata.size} airlines, ${routeMap.size} route pairs, ${airportNames.size} airports")
+            loadAirports()
+            log.info("RouteResolver loaded: ${airlineIcaoToIata.size} airlines, ${routeMap.size} route pairs, ${airportNames.size} airport names, ${airportCoords.size} airport coords")
         } catch (e: Exception) {
             log.error("Failed to load data: ${e.message}")
         }
@@ -113,18 +79,23 @@ class RouteResolver {
     }
 
     /**
-     * 공항 이름 데이터 (OpenFlights airports.dat)
+     * 공항 이름 + 좌표 데이터 (OpenFlights airports.dat)
+     * cols: 0=id, 1=name, 2=city, 3=country, 4=iata, 5=icao, 6=lat, 7=lng, ...
      */
-    private fun loadAirportNames() {
+    private fun loadAirports() {
         val url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat"
         val text = URI(url).toURL().readText()
         for (line in text.lines()) {
             val cols = parseCsvLine(line)
-            if (cols.size < 5) continue
+            if (cols.size < 8) continue
             val name = cols[1].trim().removeSurrounding("\"")
             val iata = cols[4].trim().removeSurrounding("\"")
-            if (iata.isNotBlank() && iata != "\\N" && iata.length == 3) {
-                airportNames[iata] = name
+            if (iata.isBlank() || iata == "\\N" || iata.length != 3) continue
+            airportNames[iata] = name
+            val lat = cols[6].trim().removeSurrounding("\"").toDoubleOrNull()
+            val lng = cols[7].trim().removeSurrounding("\"").toDoubleOrNull()
+            if (lat != null && lng != null) {
+                airportCoords[iata] = lat to lng
             }
         }
     }

@@ -16,6 +16,7 @@ import org.shjoo.flighttrack.domain.model.TrackWaypoint
 import org.shjoo.flighttrack.domain.port.out.AircraftMetadataPort
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackPort
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackingPort
+import org.shjoo.flighttrack.domain.port.out.FlightRoutePort
 import org.slf4j.LoggerFactory
 import io.netty.channel.ChannelOption
 import org.springframework.boot.context.properties.EnableConfigurationProperties
@@ -30,7 +31,8 @@ import java.time.Duration
 @EnableConfigurationProperties(OpenSkyConfig::class)
 class OpenSkyAircraftAdapter(
     private val openSkyConfig: OpenSkyConfig,
-    private val routeResolver: RouteResolver
+    private val routeResolver: RouteResolver,
+    private val flightRoutePort: FlightRoutePort,
 ) : AircraftTrackingPort, AircraftTrackPort, AircraftMetadataPort {
 
     private val log = LoggerFactory.getLogger(OpenSkyAircraftAdapter::class.java)
@@ -174,13 +176,27 @@ class OpenSkyAircraftAdapter(
                 )
             }
 
-            // Resolve departure/arrival airports via callsign + waypoints + route DB
+            // Resolve departure/arrival airports
+            // 1순위: adsb.lol 편명 기반 노선 DB (결정적)
+            // 2순위: RouteResolver 휴리스틱 (waypoint + heading 기반 추정)
             val callsign = response.callsign?.trim() ?: ""
-            val (depAirport, arrAirport) = routeResolver.resolveRoute(
-                callsign = callsign,
-                waypoints = waypoints
-            )
-            log.info("Route resolved for $key (callsign=$callsign): dep=$depAirport, arr=$arrAirport")
+            val firstWp = waypoints.firstOrNull()
+            val adsbLolRoute = if (callsign.isNotBlank()) {
+                flightRoutePort.resolveRoute(callsign, firstWp?.latitude, firstWp?.longitude)
+            } else null
+
+            val depAirport: String?
+            val arrAirport: String?
+            if (adsbLolRoute != null) {
+                depAirport = adsbLolRoute.departureIata
+                arrAirport = adsbLolRoute.arrivalIata
+                log.info("Route from adsb.lol for $key (callsign=$callsign): $depAirport → $arrAirport plausible=${adsbLolRoute.plausible}")
+            } else {
+                val (dep, arr) = routeResolver.resolveRoute(callsign, waypoints)
+                depAirport = dep
+                arrAirport = arr
+                log.info("Route from heuristic for $key (callsign=$callsign): $depAirport → $arrAirport")
+            }
 
             val result = Track(
                 icao24 = response.icao24,
