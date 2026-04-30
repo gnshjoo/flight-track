@@ -6,6 +6,6 @@ server:
   port: 8080
 
 opensky:
-  base-url: https://opensky-network.org
-  username:
-  password:
+  base-url: ${OPENSKY_BASE_URL:https://opensky-network.org}
+  username: ${OPENSKY_USERNAME:}
+  password: ${OPENSKY_PASSWORD:}

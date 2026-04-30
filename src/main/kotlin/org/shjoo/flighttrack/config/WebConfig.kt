@@ -12,7 +12,7 @@ class WebConfig {
     @Bean
     fun corsFilter(): CorsWebFilter {
         val config = CorsConfiguration().apply {
-            allowedOrigins = listOf("http://localhost:3000", "https://*.vercel.app")
+            allowedOriginPatterns = listOf("http://localhost:3000", "https://*.vercel.app", "https://flgiht-track-fe.vercel.app")
             allowedMethods = listOf("GET", "OPTIONS")
             allowedHeaders = listOf("*")
             maxAge = 3600
