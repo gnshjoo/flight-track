@@ -24,16 +24,13 @@ class AircraftService(
         lamax: Double?,
         lomax: Double?
     ): AircraftSnapshot {
-        val snapshot = aircraftTrackingPort.fetchAllAircraft()
+        // 데이터 소스는 원 범위로 조회하므로 bbox 로 한 번 더 트림한다
+        val snapshot = aircraftTrackingPort.fetchAircraft(lamin, lomin, lamax, lomax)
         return filterByBounds(snapshot, lamin, lomin, lamax, lomax)
     }
 
     override suspend fun getAircraftByCallsign(callsign: String): AircraftSnapshot {
-        val snapshot = aircraftTrackingPort.fetchAllAircraft()
-        val filtered = snapshot.aircraft.filter { ac ->
-            ac.callsign.contains(callsign, ignoreCase = true)
-        }
-        return AircraftSnapshot(time = snapshot.time, aircraft = filtered)
+        return aircraftTrackingPort.fetchAircraftByCallsign(callsign)
     }
 
     override suspend fun getTrack(icao24: String): Track {

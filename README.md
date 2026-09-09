@@ -33,8 +33,8 @@
 
 | 소스 | 용도 |
 |-----|------|
-| **[OpenSky Network](https://opensky-network.org)** | 실시간 항공기 위치 (`/states/all`) 및 비행 경로 (`/tracks/all`) |
-| **[adsb.lol](https://api.adsb.lol)** | Callsign 기반 출발/도착 공항 결정 (`/api/0/routeset`) |
+| **[adsb.lol](https://api.adsb.lol)** | 실시간 항공기 위치 (`/v2/point`, `/v2/callsign`, `/v2/icao`) + Callsign 기반 노선 결정 (`/api/0/routeset`) |
+| **[adsb.fi](https://adsb.fi)** | adsb.lol 장애 시 폴백 (동일 readsb v2 포맷, `/api/v2/*`) |
 | **[hexdb.io](https://hexdb.io)** | ICAO24 기반 항공기 메타데이터 (등록번호, 기종, 운항사) |
 | **[OpenFlights](https://openflights.org/data.html)** | `airports.dat` / `routes.dat` — 공항 좌표·이름 + 항공사 노선 DB |
 | **[benct/iata-utils](https://github.com/benct/iata-utils)** | 항공사 ICAO(3-letter) → IATA(2-letter) 매핑 |
@@ -46,7 +46,7 @@
 | **Gradle** (Kotlin DSL) | 빌드 시스템 |
 | **JUnit 5** | 단위 테스트 프레임워크 |
 | **Spring Boot Test** | 통합 테스트 지원 |
-| **Docker** | `Dockerfile` (멀티스테이지 빌드), `Dockerfile.amd64` (amd64 배포용) |
+| **Docker** | `Dockerfile` (멀티스테이지 빌드), `Dockerfile.vercel` (Vercel 배포용) |
 
 ## 아키텍처
 
@@ -67,10 +67,11 @@
                                │ Port (Output Port)
                     ┌──────────▼──────────────────────────┐
                     │            Adapter (Out)             │
-                    │   OpenSkyAircraftAdapter             │
+                    │   AdsbAircraftAdapter                │
                     │     ├─ AircraftTrackingPort          │
-                    │     ├─ AircraftTrackPort             │
-                    │     └─ AircraftMetadataPort (hexdb)  │
+                    │     └─ AircraftTrackPort             │
+                    │   HexDbMetadataAdapter               │
+                    │     └─ AircraftMetadataPort          │
                     │   AdsbLolRouteAdapter                │
                     │     └─ FlightRoutePort               │
                     │   RouteResolver                      │
@@ -101,7 +102,7 @@ flight-track/
 ├── settings.gradle.kts
 ├── gradlew / gradlew.bat                           # Gradle Wrapper
 ├── Dockerfile                                      # 멀티스테이지 빌드 (Alpine + JDK 21)
-├── Dockerfile.amd64                                # 사전 빌드된 jar 배포용
+├── Dockerfile.vercel                               # Vercel 배포용 (docs/DEPLOY.md 참고)
 ├── docs/
 │   └── images/                                     # README 스크린샷
 ├── src/
@@ -132,19 +133,20 @@ flight-track/
 │   │   │   │   │   ├── AirportController.kt
 │   │   │   │   │   └── TrackingController.kt
 │   │   │   │   └── out/                            # 아웃바운드 어댑터
-│   │   │   │       ├── opensky/
-│   │   │   │       │   ├── OpenSkyAircraftAdapter.kt   # OpenSky + hexdb.io 통합
-│   │   │   │       │   └── dto/
-│   │   │   │       │       └── OpenSkyResponse.kt      # API 응답 DTO
 │   │   │   │       ├── adsblol/
+│   │   │   │       │   ├── AdsbAircraftAdapter.kt      # 실시간 위치/경로 (adsb.lol → adsb.fi 폴백)
 │   │   │   │       │   ├── AdsbLolRouteAdapter.kt      # callsign → 노선 lookup
 │   │   │   │       │   └── dto/
+│   │   │   │       │       ├── AdsbLolV2Response.kt    # readsb v2 응답 DTO
 │   │   │   │       │       └── AdsbLolRouteResponse.kt
+│   │   │   │       ├── hexdb/
+│   │   │   │       │   ├── HexDbMetadataAdapter.kt     # 항공기 메타데이터
+│   │   │   │       │   └── dto/
+│   │   │   │       │       └── HexDbResponse.kt
 │   │   │   │       └── openflights/
 │   │   │   │           └── RouteResolver.kt            # 휴리스틱 노선 추정
 │   │   │   │
 │   │   │   └── config/                             # Spring 설정
-│   │   │       ├── OpenSkyConfig.kt                # OpenSky API 인증 설정
 │   │   │       ├── WebConfig.kt                    # CORS 설정
 │   │   │       └── OpenApiConfig.kt                # Swagger/OpenAPI 설정
 │   │   │
@@ -160,13 +162,13 @@ flight-track/
 
 | 대상 | TTL | 방식 | 설명 |
 |------|-----|------|------|
-| 실시간 항공기 스냅샷 (`/states/all`) | 5분 | `@Volatile` + 코루틴 `Mutex` | OpenSky rate-limit 회피, 동시 요청 단일 fetch |
-| 항공기 비행 경로 (`/tracks/all`) | 5분 | In-memory `MutableMap` | icao24 단위, 100건 초과 시 LRU eviction |
-| 항공기 메타데이터 (hexdb.io) | 5분 | In-memory `MutableMap` | 200건 초과 시 만료 엔트리 제거 |
+| 실시간 항공기 스냅샷 (`/v2/point`) | 30초 | `ConcurrentHashMap` | 조회 원(중심점/반경) 단위, 50건 초과 시 만료 엔트리 제거 |
+| 항공기 현재 경로 (`/v2/icao`) | 30초 | `ConcurrentHashMap` | icao24 단위, 100건 초과 시 만료 엔트리 제거 |
+| 항공기 메타데이터 (hexdb.io) | 5분 | `ConcurrentHashMap` | 200건 초과 시 만료 엔트리 제거 |
 | adsb.lol 노선 lookup (positive) | 2시간 | `ConcurrentHashMap` | callsign 단위 |
 | adsb.lol 노선 lookup (negative) | 15분 | `ConcurrentHashMap` | 노선 DB miss 재조회 간격 |
 
-OpenSky 호출은 최대 3회까지 backoff(3s × attempt) 재시도하며, 실패해도 직전 캐시가 있으면 그 값을 반환합니다.
+실시간 조회는 adsb.lol 실패 시 adsb.fi 로 폴백하며, 둘 다 실패해도 직전 캐시가 있으면 그 값을 반환합니다.
 
 ## API 엔드포인트
 
@@ -179,22 +181,13 @@ OpenSky 호출은 최대 3회까지 backoff(3s × attempt) 재시도하며, 실�
 | `GET` | `/api/airports/{code}` | IATA 공항 코드 단건 조회 (이름·좌표) |
 | `GET` | `/api/tracking/aircraft` | 실시간 항공기 위치 — `callsign` 검색 또는 bounding box (`lamin/lomin/lamax/lomax`) |
 | `GET` | `/api/tracking/aircraft/{icao24}/info` | 항공기 등록번호/기종/운항사 등 상세 메타데이터 |
-| `GET` | `/api/tracking/track?icao24=...` | 비행 경로 (waypoint) + 추정 출발/도착 공항 |
+| `GET` | `/api/tracking/track?icao24=...` | 현재 위치 waypoint + 추정 출발/도착 공항 (오픈 ADS-B API 특성상 과거 경로는 미제공) |
 
 ## 시작하기
 
 ### 환경 변수
 
-```bash
-# OpenSky 인증 (선택) — 미설정 시 익명, rate-limit 적용
-export OPENSKY_USERNAME=your_username
-export OPENSKY_PASSWORD=your_password
-
-# OpenSky base URL (기본값: https://opensky-network.org)
-export OPENSKY_BASE_URL=https://opensky-network.org
-```
-
-OpenSky 계정은 [opensky-network.org](https://opensky-network.org)에서 무료 발급 가능. adsb.lol과 hexdb.io는 인증 없이 호출됩니다.
+필요 없습니다 — adsb.lol, adsb.fi, hexdb.io 모두 인증 없이 호출됩니다.
 
 ### 실행
 
@@ -212,15 +205,12 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 # 멀티스테이지 빌드 (소스 → 빌드 → 런타임 이미지)
 docker build -t flight-track .
 
-# amd64 배포용 (사전 빌드된 jar 사용, 가벼움)
-./gradlew bootJar
-docker build -f Dockerfile.amd64 --platform linux/amd64 -t flight-track:amd64 .
-
-docker run -p 8080:8080 \
-  -e OPENSKY_USERNAME=... \
-  -e OPENSKY_PASSWORD=... \
-  flight-track
+docker run -p 8080:8080 flight-track
 ```
+
+### 배포 (Vercel)
+
+`Dockerfile.vercel` 기반으로 Vercel Functions 컨테이너로 배포합니다. 절차는 [docs/DEPLOY.md](docs/DEPLOY.md) 참고.
 
 ### 사용 예시
 

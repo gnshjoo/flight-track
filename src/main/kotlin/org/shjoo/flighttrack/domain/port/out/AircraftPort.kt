@@ -6,7 +6,20 @@ import org.shjoo.flighttrack.domain.model.FlightRoute
 import org.shjoo.flighttrack.domain.model.Track
 
 interface AircraftTrackingPort {
-    suspend fun fetchAllAircraft(): AircraftSnapshot
+    /**
+     * bbox 범위 내 항공기 조회. 모든 인자가 null 이면 기본 지역(구현체 정의)을 조회한다.
+     */
+    suspend fun fetchAircraft(
+        lamin: Double?,
+        lomin: Double?,
+        lamax: Double?,
+        lomax: Double?
+    ): AircraftSnapshot
+
+    /**
+     * 콜사인으로 항공기 검색. 정확 매칭 우선, 없으면 부분 매칭(구현체 정의).
+     */
+    suspend fun fetchAircraftByCallsign(callsign: String): AircraftSnapshot
 }
 
 interface AircraftTrackPort {
