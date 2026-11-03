@@ -1,12 +1,13 @@
 package org.shjoo.flighttrack.adapter.out.adsblol
 
 import io.netty.channel.ChannelOption
-import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolAircraft
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolV2Response
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
 import org.shjoo.flighttrack.adapter.out.openflights.RouteResolver
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
-import org.shjoo.flighttrack.domain.model.AircraftState
 import org.shjoo.flighttrack.domain.model.BoundingBox
 import org.shjoo.flighttrack.domain.model.Icao24
 import org.shjoo.flighttrack.domain.model.Track
@@ -23,10 +24,6 @@ import org.springframework.web.reactive.function.client.awaitBodyOrNull
 import reactor.netty.http.client.HttpClient
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.asin
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * ADS-B 오픈 API(readsb v2 포맷) 기반 실시간 추적 어댑터.
@@ -97,18 +94,9 @@ class AdsbAircraftAdapter(
         TraceSource("adsb.lol", "https://adsb.lol", "https://globe.adsb.lol/"),
     )
 
-    private val MAX_TRACK_POINTS = 600
-
-    // readsb 응답 단위(ft, knot, ft/min) → 기존 API 계약 단위(m, m/s) 변환 계수
-    private val FT_TO_M = 0.3048
-    private val KT_TO_MS = 0.514444
-    private val FPM_TO_MS = 0.00508
-
     // bbox 미지정 시 기본 조회 지역: 한반도 중심, 최대 반경
     private val DEFAULT_LAT = 36.5
     private val DEFAULT_LON = 127.8
-    private val MAX_RADIUS_NM = 250
-    private val EARTH_RADIUS_NM = 3440.065
 
     private val snapshotCache = ConcurrentHashMap<String, Pair<Long, AircraftSnapshot>>()
     private val SNAPSHOT_CACHE_MS = 30_000L
@@ -116,7 +104,7 @@ class AdsbAircraftAdapter(
     private val TRACK_CACHE_MS = 30_000L
 
     override suspend fun fetchAircraft(box: BoundingBox?): AircraftSnapshot {
-        val (lat, lon, radiusNm) = box?.let { boundsToCircle(it) } ?: Triple(DEFAULT_LAT, DEFAULT_LON, MAX_RADIUS_NM)
+        val (lat, lon, radiusNm) = box?.toCircle() ?: Circle(DEFAULT_LAT, DEFAULT_LON, MAX_RADIUS_NM)
         return fetchPoint(lat, lon, radiusNm)
     }
 
@@ -144,12 +132,15 @@ class AdsbAircraftAdapter(
         }
 
         // 콜사인/현재 위치는 REST API 로, 과거 경로는 globe trace 로 가져온다
-        val response = getWithFallback { it.icaoPath(key) }
+        val (response, parsed) = coroutineScope {
+            val rest = async { getWithFallback { it.icaoPath(key) } }
+            val trace = async { fetchTrace(key) }
+            rest.await() to trace.await()
+        }
         val ac = response?.states?.firstOrNull { it.lat != null && it.lon != null }
 
-        val traceWaypoints = fetchTraceWaypoints(key)
         val waypoints = when {
-            !traceWaypoints.isNullOrEmpty() -> traceWaypoints
+            parsed != null -> parsed.waypoints
             ac != null -> listOf(
                 TrackWaypoint(
                     time = now / 1000,
@@ -162,7 +153,7 @@ class AdsbAircraftAdapter(
             )
             else -> emptyList()
         }
-        if (response == null && traceWaypoints == null) throw UpstreamUnavailableException("adsb")
+        if (response == null && parsed == null) throw UpstreamUnavailableException("adsb")
         if (waypoints.isEmpty()) {
             val empty = Track(icao24 = key, callsign = "", path = emptyList())
             trackCache[key] = now to empty
@@ -171,7 +162,7 @@ class AdsbAircraftAdapter(
 
         // 출발/도착 공항 추정은 기존과 동일하게 노선 DB → 휴리스틱 순서로 시도.
         val last = waypoints.last()
-        val callsign = ac?.flight?.trim() ?: ""
+        val callsign = ac?.flight?.trim()?.ifBlank { null } ?: parsed?.callsign ?: ""
 
         val adsbLolRoute = if (callsign.isNotBlank()) {
             flightRoutePort.resolveRoute(callsign, last.latitude, last.longitude)
@@ -207,11 +198,7 @@ class AdsbAircraftAdapter(
         return result
     }
 
-    /**
-     * tar1090 globe trace 에서 과거 경로를 가져와 현재 비행 구간(마지막 leg 마커 이후)의
-     * waypoint 목록으로 변환한다. 모든 소스 실패 시 null.
-     */
-    private suspend fun fetchTraceWaypoints(hex: String): List<TrackWaypoint>? {
+    private suspend fun fetchTrace(hex: String): ParsedTrace? {
         val dir = hex.takeLast(2)
         for (source in traceSources) {
             try {
@@ -221,37 +208,13 @@ class AdsbAircraftAdapter(
                     .retrieve()
                     .awaitBodyOrNull<AdsbTraceResponse>()
 
-                val trace = response?.trace
-                if (trace.isNullOrEmpty()) continue
-
-                val base = response.timestamp
-                // flags 비트 2 = 새 leg 시작. 마지막 leg = 현재 비행 구간
-                val lastLegStart = trace.indexOfLast { p ->
-                    (((p.getOrNull(6) as? Number)?.toInt() ?: 0) and 2) != 0
-                }.coerceAtLeast(0)
-                val leg = trace.subList(lastLegStart, trace.size)
-                val step = if (leg.size > MAX_TRACK_POINTS) leg.size / MAX_TRACK_POINTS + 1 else 1
-
-                val waypoints = leg.filterIndexed { i, _ -> i % step == 0 || i == leg.size - 1 }
-                    .mapNotNull { p ->
-                        val lat = (p.getOrNull(1) as? Number)?.toDouble() ?: return@mapNotNull null
-                        val lon = (p.getOrNull(2) as? Number)?.toDouble() ?: return@mapNotNull null
-                        val alt = p.getOrNull(3)
-                        TrackWaypoint(
-                            time = (base + ((p.getOrNull(0) as? Number)?.toDouble() ?: 0.0)).toLong(),
-                            latitude = lat,
-                            longitude = lon,
-                            altitude = (alt as? Number)?.toDouble()?.times(FT_TO_M),
-                            heading = (p.getOrNull(5) as? Number)?.toDouble(),
-                            onGround = alt == "ground"
-                        )
-                    }
-
-                if (waypoints.isNotEmpty()) {
+                val parsed = response?.let { parseTrace(it) }
+                if (parsed != null) {
                     if (source != traceSources.first()) log.info("Trace served by fallback ${source.name} for $hex")
-                    return waypoints
+                    return parsed
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 log.warn("${source.name} trace fetch failed for $hex: ${e.message}")
             }
         }
@@ -303,43 +266,11 @@ class AdsbAircraftAdapter(
                 }
                 log.warn("${source.name} returned empty body: $uri")
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 log.warn("${source.name} request failed ($uri): ${e.message}")
             }
         }
         log.error("All ADS-B sources failed for request")
         return null
-    }
-
-    private fun AdsbLolAircraft.toState(): AircraftState? {
-        val latitude = lat ?: return null
-        val longitude = lon ?: return null
-        if (altBaro == "ground") return null
-        return AircraftState(
-            icao24 = hex,
-            callsign = flight?.trim() ?: "",
-            originCountry = "",
-            longitude = longitude,
-            latitude = latitude,
-            altitude = (altBaro as? Number)?.toDouble()?.times(FT_TO_M),
-            velocity = gs?.times(KT_TO_MS),
-            heading = track,
-            verticalRate = (baroRate ?: geomRate)?.times(FPM_TO_MS)
-        )
-    }
-
-    /** bbox 를 외접원(중심점 + 모서리까지의 거리 nm)으로 변환. 반경은 API 한계(250nm)로 클램프. */
-    private fun boundsToCircle(box: BoundingBox): Triple<Double, Double, Int> {
-        val centerLat = (box.lamin + box.lamax) / 2
-        val centerLon = (box.lomin + box.lomax) / 2
-        val radius = haversineNm(centerLat, centerLon, box.lamax, box.lomax)
-        return Triple(centerLat, centerLon, radius.toInt().coerceIn(1, MAX_RADIUS_NM))
-    }
-
-    private fun haversineNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2) * sin(dLon / 2)
-        return 2 * EARTH_RADIUS_NM * asin(sqrt(a))
     }
 }
