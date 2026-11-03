@@ -208,7 +208,7 @@ class AdsbAircraftAdapter(
                     .retrieve()
                     .awaitBodyOrNull<AdsbTraceResponse>()
 
-                val parsed = response?.let { parseTrace(it) }
+                val parsed = response?.let { parseTrace(it, System.currentTimeMillis() / 1000) }
                 if (parsed != null) {
                     if (source != traceSources.first()) log.info("Trace served by fallback ${source.name} for $hex")
                     return parsed

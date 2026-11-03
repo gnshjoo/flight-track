@@ -57,7 +57,11 @@ internal data class ParsedTrace(val waypoints: List<TrackWaypoint>, val callsign
  * tar1090 trace 에서 현재 비행 구간(flags 비트 2 = 새 leg 시작, 마지막 마커 이후)만 잘라
  * waypoint 로 변환한다. 쓸 수 있는 점이 없으면 null.
  */
-internal fun parseTrace(response: AdsbTraceResponse, maxPoints: Int = 600): ParsedTrace? {
+internal fun parseTrace(
+    response: AdsbTraceResponse,
+    nowEpochSeconds: Long,
+    maxPoints: Int = 600,
+): ParsedTrace? {
     val trace = response.trace
     if (trace.isNullOrEmpty()) return null
 

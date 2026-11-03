@@ -17,6 +17,9 @@ class AdsbMappingTest {
     private fun fixture(): AdsbTraceResponse =
         jacksonObjectMapper().readValue(javaClass.getResourceAsStream("/adsblol/trace_780ad2.json")!!)
 
+    private val fixtureLastPointTime = 1_793_672_449L
+    private val fixtureNow = fixtureLastPointTime + 600
+
     private fun point(offset: Double, lat: Double?, flags: Int = 0, extra: Any? = null): List<Any?> =
         listOf(offset, lat, 120.0, 30000, 400.0, 90.0, flags, 0, extra)
 
@@ -54,7 +57,7 @@ class AdsbMappingTest {
 
     @Test
     fun `trace uses only the last leg`() {
-        val parsed = assertNotNull(parseTrace(fixture()))
+        val parsed = assertNotNull(parseTrace(fixture(), fixtureNow))
         assertEquals(6, parsed.waypoints.size)
         assertTrue(parsed.waypoints.first().onGround)
         assertEquals(35.545074, parsed.waypoints.first().latitude, 1e-9)
@@ -64,13 +67,13 @@ class AdsbMappingTest {
 
     @Test
     fun `trace callsign comes from the last leg not an earlier one`() {
-        assertEquals("CCA184", parseTrace(fixture())?.callsign)
+        assertEquals("CCA184", parseTrace(fixture(), fixtureNow)?.callsign)
     }
 
     @Test
     fun `long traces are downsampled but keep the final point`() {
         val trace = List(1500) { point(it.toDouble(), 30.0 + it * 0.001) }
-        val parsed = assertNotNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = trace), maxPoints = 600))
+        val parsed = assertNotNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = trace), nowEpochSeconds = 2500, maxPoints = 600))
         assertTrue(parsed.waypoints.size <= 600)
         assertTrue(parsed.waypoints.size < 1500)
         assertEquals(30.0 + 1499 * 0.001, parsed.waypoints.last().latitude, 1e-9)
@@ -79,15 +82,23 @@ class AdsbMappingTest {
 
     @Test
     fun `trace with no valid points is no trace`() {
-        assertNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = listOf(point(0.0, null), point(1.0, null)))))
-        assertNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = emptyList())))
-        assertNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = null)))
+        assertNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = listOf(point(0.0, null), point(1.0, null))), nowEpochSeconds = 1000))
+        assertNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = emptyList()), nowEpochSeconds = 1000))
+        assertNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = null), nowEpochSeconds = 1000))
     }
 
     @Test
     fun `trace without any callsign object has no callsign`() {
-        val parsed = assertNotNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = listOf(point(0.0, 37.0), point(1.0, 37.1)))))
+        val parsed = assertNotNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = listOf(point(0.0, 37.0), point(1.0, 37.1))), nowEpochSeconds = 1000))
         assertNull(parsed.callsign)
         assertFalse(parsed.waypoints.any { it.onGround })
+    }
+
+    @Test
+    fun `a trace whose last point is older than two hours is discarded`() {
+        assertNull(parseTrace(fixture(), nowEpochSeconds = fixtureLastPointTime + 3 * 3600))
+        val fresh = assertNotNull(parseTrace(fixture(), nowEpochSeconds = fixtureLastPointTime + 600))
+        assertEquals(6, fresh.waypoints.size)
+        assertEquals(fixtureLastPointTime, fresh.waypoints.last().time)
     }
 }

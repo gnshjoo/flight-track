@@ -9,8 +9,14 @@ class RouteResolverTest {
 
     private val resolver = RouteResolver(testData())
 
-    private fun wp(time: Long, lat: Double, lng: Double, heading: Double? = null, onGround: Boolean = false) =
-        TrackWaypoint(time = time, latitude = lat, longitude = lng, altitude = null, heading = heading, onGround = onGround)
+    private fun wp(
+        time: Long,
+        lat: Double,
+        lng: Double,
+        heading: Double? = null,
+        onGround: Boolean = false,
+        altitude: Double? = null,
+    ) = TrackWaypoint(time = time, latitude = lat, longitude = lng, altitude = altitude, heading = heading, onGround = onGround)
 
     @Test
     fun `ground waypoint near an airport decides the departure`() {
@@ -23,15 +29,27 @@ class RouteResolverTest {
 
     @Test
     fun `several destinations pick the one in the heading direction`() {
-        val flightEast = listOf(wp(0, 35.18, 128.94), wp(600, 36.0, 129.5, heading = 80.0))
-        val flightWest = listOf(wp(0, 35.18, 128.94), wp(600, 36.0, 129.5, heading = 300.0))
+        val flightEast = listOf(wp(0, 35.18, 128.94, altitude = 500.0), wp(600, 36.0, 129.5, heading = 80.0))
+        val flightWest = listOf(wp(0, 35.18, 128.94, altitude = 500.0), wp(600, 36.0, 129.5, heading = 300.0))
         assertEquals("PUS" to "NRT", resolver.resolveRoute("KAL123", flightEast))
         assertEquals("PUS" to "ICN", resolver.resolveRoute("KAL123", flightWest))
     }
 
     @Test
+    fun `a cruising first waypoint does not pin a departure`() {
+        val cruising = listOf(wp(0, 37.47, 126.45, altitude = 10_000.0), wp(600, 37.0, 128.0, heading = 100.0, altitude = 10_000.0))
+        assertEquals(null to null, resolver.resolveRoute("KAL123", cruising))
+    }
+
+    @Test
+    fun `no heading with several destinations gives no arrival`() {
+        val noHeading = listOf(wp(0, 35.18, 128.94, onGround = true), wp(600, 36.0, 129.5))
+        assertEquals("PUS" to null, resolver.resolveRoute("KAL123", noHeading))
+    }
+
+    @Test
     fun `unknown airline returns departure only`() {
-        val result = resolver.resolveRoute("ZZZ999", listOf(wp(0, 37.47, 126.45), wp(600, 37.0, 128.0, heading = 100.0)))
+        val result = resolver.resolveRoute("ZZZ999", listOf(wp(0, 37.47, 126.45, altitude = 500.0), wp(600, 37.0, 128.0, heading = 100.0)))
         assertEquals("ICN", result.first)
         assertNull(result.second)
     }
