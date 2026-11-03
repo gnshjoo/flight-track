@@ -3,6 +3,7 @@ package org.shjoo.flighttrack.adapter.out.adsblol
 import io.netty.channel.ChannelOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolV2Response
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
@@ -28,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * ADS-B 오픈 API(readsb v2 포맷) 기반 실시간 추적 어댑터.
  *
- * 주 소스는 adsb.lol, 실패 시 동일 포맷의 adsb.fi 로 폴백한다.
+ * 위치 조회는 adsb.lol 과 adsb.fi(동일 포맷)를 함께 불러 합치고, 콜사인/icao 조회는 adsb.lol 실패 시 adsb.fi 로 폴백한다.
  * OpenSky 는 클라우드(AWS 등) IP 대역에서의 접속을 네트워크 레벨에서 차단하여
  * Vercel 배포 환경에서 사용할 수 없다. 위치 조회는 point+radius(최대 250nm)
  * 방식이므로 bbox 를 외접원으로 변환해 조회한다.
@@ -230,13 +231,16 @@ class AdsbAircraftAdapter(
             if ((now - ts) < SNAPSHOT_CACHE_MS) return snapshot
         }
 
-        val response = getWithFallback { it.pointPath(lat, lon, radiusNm) }
-            ?: return snapshotCache[cacheKey]?.second
-                ?: throw UpstreamUnavailableException("adsb")
+        val responses = coroutineScope {
+            sources.map { source -> async { fetchFrom(source, source.pointPath(lat, lon, radiusNm)) } }.awaitAll()
+        }.filterNotNull()
+        if (responses.isEmpty()) {
+            return snapshotCache[cacheKey]?.second ?: throw UpstreamUnavailableException("adsb")
+        }
 
-        val aircraft = response.states.orEmpty().mapNotNull { it.toState(response.nowSeconds) }
+        val aircraft = mergeFreshest(responses.map { r -> r.states.orEmpty().mapNotNull { it.toState(r.nowSeconds) } })
         val result = AircraftSnapshot(
-            time = if (response.epochSeconds > 0) response.epochSeconds else now / 1000,
+            time = responses.minOf { it.epochSeconds }.takeIf { it > 0 } ?: (now / 1000),
             aircraft = aircraft
         )
         snapshotCache[cacheKey] = now to result
