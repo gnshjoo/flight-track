@@ -101,4 +101,14 @@ class AdsbMappingTest {
         assertEquals(6, fresh.waypoints.size)
         assertEquals(fixtureLastPointTime, fresh.waypoints.last().time)
     }
+
+    @Test
+    fun `a time gap of more than thirty minutes starts a new leg`() {
+        val earlier = List(5) { point(it * 10.0, 30.0 + it * 0.01) }
+        val later = List(5) { point(10_000.0 + it * 10, 40.0 + it * 0.01) }
+        val parsed = assertNotNull(parseTrace(AdsbTraceResponse(timestamp = 1000.0, trace = earlier + later), nowEpochSeconds = 1000L + 10_100))
+        assertEquals(5, parsed.waypoints.size)
+        assertEquals(40.0, parsed.waypoints.first().latitude, 1e-9)
+        assertEquals(1000L + 10_040, parsed.waypoints.last().time)
+    }
 }

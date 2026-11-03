@@ -48,6 +48,13 @@ class RouteResolverTest {
     }
 
     @Test
+    fun `two destinations in nearly the same direction give no arrival`() {
+        // (36.5, 118.0) 에서 ICN 은 79°, NRT 는 86° 방향이라 heading 82° 로는 둘을 가를 수 없다
+        val ambiguous = listOf(wp(0, 35.18, 128.94, onGround = true), wp(600, 36.5, 118.0, heading = 82.0))
+        assertEquals("PUS" to null, resolver.resolveRoute("KAL123", ambiguous))
+    }
+
+    @Test
     fun `unknown airline returns departure only`() {
         val result = resolver.resolveRoute("ZZZ999", listOf(wp(0, 37.47, 126.45, altitude = 500.0), wp(600, 37.0, 128.0, heading = 100.0)))
         assertEquals("ICN", result.first)
