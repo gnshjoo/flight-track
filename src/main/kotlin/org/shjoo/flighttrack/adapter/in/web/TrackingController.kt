@@ -5,6 +5,8 @@ import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.shjoo.flighttrack.domain.model.AircraftInfo
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
+import org.shjoo.flighttrack.domain.model.BoundingBox
+import org.shjoo.flighttrack.domain.model.Icao24
 import org.shjoo.flighttrack.domain.model.Track
 import org.shjoo.flighttrack.domain.port.`in`.GetAircraftInfoUseCase
 import org.shjoo.flighttrack.domain.port.`in`.GetAircraftUseCase
@@ -37,7 +39,7 @@ class TrackingController(
         if (!callsign.isNullOrBlank()) {
             return getAircraftUseCase.getAircraftByCallsign(callsign)
         }
-        return getAircraftUseCase.getAircraft(lamin, lomin, lamax, lomax)
+        return getAircraftUseCase.getAircraft(BoundingBox.fromParams(lamin, lomin, lamax, lomax))
     }
 
     @GetMapping("/aircraft/{icao24}/info")
@@ -45,7 +47,7 @@ class TrackingController(
     suspend fun getAircraftInfo(
         @Parameter(description = "항공기 ICAO24 hex 코드", example = "abc123") @PathVariable icao24: String
     ): ResponseEntity<AircraftInfo> {
-        val info = getAircraftInfoUseCase.getAircraftInfo(icao24)
+        val info = getAircraftInfoUseCase.getAircraftInfo(Icao24.parse(icao24))
             ?: return ResponseEntity.notFound().build()
         return ResponseEntity.ok(info)
     }
@@ -55,6 +57,6 @@ class TrackingController(
     suspend fun getTrack(
         @Parameter(description = "항공기 ICAO24 hex 코드", example = "abc123") @RequestParam icao24: String
     ): Track {
-        return getTrackUseCase.getTrack(icao24)
+        return getTrackUseCase.getTrack(Icao24.parse(icao24))
     }
 }

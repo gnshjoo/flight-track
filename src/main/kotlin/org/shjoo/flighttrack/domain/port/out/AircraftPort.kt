@@ -2,19 +2,16 @@ package org.shjoo.flighttrack.domain.port.out
 
 import org.shjoo.flighttrack.domain.model.AircraftInfo
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
+import org.shjoo.flighttrack.domain.model.BoundingBox
 import org.shjoo.flighttrack.domain.model.FlightRoute
+import org.shjoo.flighttrack.domain.model.Icao24
 import org.shjoo.flighttrack.domain.model.Track
 
 interface AircraftTrackingPort {
     /**
-     * bbox 범위 내 항공기 조회. 모든 인자가 null 이면 기본 지역(구현체 정의)을 조회한다.
+     * bbox 범위 내 항공기 조회. null 이면 기본 지역(구현체 정의)을 조회한다.
      */
-    suspend fun fetchAircraft(
-        lamin: Double?,
-        lomin: Double?,
-        lamax: Double?,
-        lomax: Double?
-    ): AircraftSnapshot
+    suspend fun fetchAircraft(box: BoundingBox?): AircraftSnapshot
 
     /**
      * 콜사인으로 항공기 검색. 정확 매칭 우선, 없으면 부분 매칭(구현체 정의).
@@ -23,11 +20,11 @@ interface AircraftTrackingPort {
 }
 
 interface AircraftTrackPort {
-    suspend fun fetchTrack(icao24: String): Track
+    suspend fun fetchTrack(icao24: Icao24): Track
 }
 
 interface AircraftMetadataPort {
-    suspend fun fetchAircraftMetadata(icao24: String): AircraftInfo?
+    suspend fun fetchAircraftMetadata(icao24: Icao24): AircraftInfo?
 }
 
 interface FlightRoutePort {

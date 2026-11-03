@@ -7,8 +7,11 @@ import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
 import org.shjoo.flighttrack.adapter.out.openflights.RouteResolver
 import org.shjoo.flighttrack.domain.model.AircraftSnapshot
 import org.shjoo.flighttrack.domain.model.AircraftState
+import org.shjoo.flighttrack.domain.model.BoundingBox
+import org.shjoo.flighttrack.domain.model.Icao24
 import org.shjoo.flighttrack.domain.model.Track
 import org.shjoo.flighttrack.domain.model.TrackWaypoint
+import org.shjoo.flighttrack.domain.model.UpstreamUnavailableException
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackPort
 import org.shjoo.flighttrack.domain.port.out.AircraftTrackingPort
 import org.shjoo.flighttrack.domain.port.out.FlightRoutePort
@@ -112,15 +115,8 @@ class AdsbAircraftAdapter(
     private val trackCache = ConcurrentHashMap<String, Pair<Long, Track>>()
     private val TRACK_CACHE_MS = 30_000L
 
-    override suspend fun fetchAircraft(
-        lamin: Double?, lomin: Double?, lamax: Double?, lomax: Double?
-    ): AircraftSnapshot {
-        val (lat, lon, radiusNm) =
-            if (lamin != null && lomin != null && lamax != null && lomax != null) {
-                boundsToCircle(lamin, lomin, lamax, lomax)
-            } else {
-                Triple(DEFAULT_LAT, DEFAULT_LON, MAX_RADIUS_NM)
-            }
+    override suspend fun fetchAircraft(box: BoundingBox?): AircraftSnapshot {
+        val (lat, lon, radiusNm) = box?.let { boundsToCircle(it) } ?: Triple(DEFAULT_LAT, DEFAULT_LON, MAX_RADIUS_NM)
         return fetchPoint(lat, lon, radiusNm)
     }
 
@@ -139,9 +135,9 @@ class AdsbAircraftAdapter(
         return AircraftSnapshot(time = regional.time, aircraft = filtered)
     }
 
-    override suspend fun fetchTrack(icao24: String): Track {
+    override suspend fun fetchTrack(icao24: Icao24): Track {
         val now = System.currentTimeMillis()
-        val key = icao24.lowercase()
+        val key = icao24.hex
 
         trackCache[key]?.let { (ts, track) ->
             if ((now - ts) < TRACK_CACHE_MS) return track
@@ -166,8 +162,9 @@ class AdsbAircraftAdapter(
             )
             else -> emptyList()
         }
+        if (response == null && traceWaypoints == null) throw UpstreamUnavailableException("adsb")
         if (waypoints.isEmpty()) {
-            val empty = Track(icao24 = icao24, callsign = "", path = emptyList())
+            val empty = Track(icao24 = key, callsign = "", path = emptyList())
             trackCache[key] = now to empty
             return empty
         }
@@ -194,7 +191,7 @@ class AdsbAircraftAdapter(
         }
 
         val result = Track(
-            icao24 = ac?.hex?.ifBlank { null } ?: icao24,
+            icao24 = ac?.hex?.ifBlank { null } ?: key,
             callsign = callsign,
             path = waypoints,
             estDepartureAirport = depAirport,
@@ -271,7 +268,7 @@ class AdsbAircraftAdapter(
 
         val response = getWithFallback { it.pointPath(lat, lon, radiusNm) }
             ?: return snapshotCache[cacheKey]?.second
-                ?: AircraftSnapshot(time = now / 1000, aircraft = emptyList())
+                ?: throw UpstreamUnavailableException("adsb")
 
         val aircraft = response.states.orEmpty().mapNotNull { it.toState() }
         val result = AircraftSnapshot(
@@ -331,12 +328,10 @@ class AdsbAircraftAdapter(
     }
 
     /** bbox 를 외접원(중심점 + 모서리까지의 거리 nm)으로 변환. 반경은 API 한계(250nm)로 클램프. */
-    private fun boundsToCircle(
-        lamin: Double, lomin: Double, lamax: Double, lomax: Double
-    ): Triple<Double, Double, Int> {
-        val centerLat = (lamin + lamax) / 2
-        val centerLon = (lomin + lomax) / 2
-        val radius = haversineNm(centerLat, centerLon, lamax, lomax)
+    private fun boundsToCircle(box: BoundingBox): Triple<Double, Double, Int> {
+        val centerLat = (box.lamin + box.lamax) / 2
+        val centerLon = (box.lomin + box.lomax) / 2
+        val radius = haversineNm(centerLat, centerLon, box.lamax, box.lomax)
         return Triple(centerLat, centerLon, radius.toInt().coerceIn(1, MAX_RADIUS_NM))
     }
 

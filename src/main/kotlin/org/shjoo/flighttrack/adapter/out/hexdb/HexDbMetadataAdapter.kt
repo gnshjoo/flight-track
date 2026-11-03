@@ -3,6 +3,7 @@ package org.shjoo.flighttrack.adapter.out.hexdb
 import io.netty.channel.ChannelOption
 import org.shjoo.flighttrack.adapter.out.hexdb.dto.HexDbAircraftResponse
 import org.shjoo.flighttrack.domain.model.AircraftInfo
+import org.shjoo.flighttrack.domain.model.Icao24
 import org.shjoo.flighttrack.domain.port.out.AircraftMetadataPort
 import org.slf4j.LoggerFactory
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
@@ -35,9 +36,9 @@ class HexDbMetadataAdapter : AircraftMetadataPort {
     private val cache = ConcurrentHashMap<String, Pair<Long, AircraftInfo?>>()
     private val CACHE_MS = 300_000L // 5분 캐시 (메타데이터는 잘 안 변함)
 
-    override suspend fun fetchAircraftMetadata(icao24: String): AircraftInfo? {
+    override suspend fun fetchAircraftMetadata(icao24: Icao24): AircraftInfo? {
         val now = System.currentTimeMillis()
-        val key = icao24.uppercase()
+        val key = icao24.hex.uppercase()
 
         cache[key]?.let { (ts, info) ->
             if ((now - ts) < CACHE_MS) return info
@@ -71,7 +72,7 @@ class HexDbMetadataAdapter : AircraftMetadataPort {
 
             info
         } catch (e: Exception) {
-            log.error("HexDB metadata fetch failed for $icao24: ${e.message}")
+            log.error("HexDB metadata fetch failed for $key: ${e.message}")
             cache[key]?.second
         }
     }
