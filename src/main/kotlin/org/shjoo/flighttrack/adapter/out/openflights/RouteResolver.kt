@@ -68,15 +68,15 @@ class RouteResolver(private val data: OpenFlightsData) {
         // 첫 waypoint 근처 공항 후보들 (넓은 범위)
         val nearFirst = findNearbyAirports(firstWp.latitude, firstWp.longitude, 2.0, 5)
 
-        if (airlineIata != null) {
-            // 첫 waypoint 근처 공항 중 route가 있는 것 사용 → 도착지는 route DB + heading으로 결정
-            for (dep in nearFirst) {
-                val arrival = resolveDestinationFromRouteDB(airlineIata, dep, sorted)
-                if (arrival != null) {
-                    log.info("Route resolved: ${dep.iata} → $arrival (callsign=$trimmed, airline=$airlineIata)")
-                    return dep.iata to arrival
-                }
-            }
+        // 첫 waypoint 에서 가장 가까운, 이 항공사 노선이 있는 공항 하나만 본다.
+        // 그 공항에서 도착지가 모호하다고 다음 공항으로 넘어가면 엉뚱한 출발지를 고르게 된다
+        val dep = airlineIata?.let { airline ->
+            nearFirst.firstOrNull { !data.destinationsByRoute[RouteKey(airline, it.iata)].isNullOrEmpty() }
+        }
+        if (dep != null) {
+            val arrival = resolveDestinationFromRouteDB(airlineIata, dep, sorted)
+            log.info("Route resolved: ${dep.iata} → $arrival (callsign=$trimmed, airline=$airlineIata)")
+            return dep.iata to arrival
         }
 
         // 3단계: route DB 매칭 실패 → 출발공항만 반환
