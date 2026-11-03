@@ -55,6 +55,15 @@ class RouteResolverTest {
     }
 
     @Test
+    fun `an ambiguous arrival from the first airport does not fall through to the next one`() {
+        // GMP 와 ICN 모두 첫 점 근처이고, GMP 의 PUS·NRT 는 heading 90° 로 가를 수 없다
+        val routes = "KE,1,GMP,2,PUS,3,,0,333\nKE,1,GMP,2,NRT,4,,0,333\nKE,1,ICN,1,NRT,4,,0,333\n"
+        val twoAirports = RouteResolver(OpenFlightsData.parse(AIRLINES_CSV, routes, AIRPORTS_DAT))
+        val flight = listOf(wp(0, 37.55, 126.75, altitude = 500.0), wp(600, 36.5, 118.0, heading = 90.0))
+        assertEquals("GMP" to null, twoAirports.resolveRoute("KAL123", flight))
+    }
+
+    @Test
     fun `unknown airline returns departure only`() {
         val result = resolver.resolveRoute("ZZZ999", listOf(wp(0, 37.47, 126.45, altitude = 500.0), wp(600, 37.0, 128.0, heading = 100.0)))
         assertEquals("ICN", result.first)
