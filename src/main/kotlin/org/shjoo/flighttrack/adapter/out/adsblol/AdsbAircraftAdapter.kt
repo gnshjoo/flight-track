@@ -62,6 +62,7 @@ class AdsbAircraftAdapter(
         val icaoPath: (String) -> String,
     ) {
         val client: WebClient by lazy { buildClient(baseUrl) }
+        val gate = FeedGate()
     }
 
     private val sources = listOf(
@@ -250,27 +251,36 @@ class AdsbAircraftAdapter(
 
     /**
      * 소스를 순서대로 시도해 첫 정상 응답을 반환. 항공기 0대는 정상 응답이므로
-     * 폴백하지 않고, 요청 실패/빈 본문일 때만 다음 소스로 넘어간다.
+     * 폴백하지 않고, 요청 실패/빈 본문/게이트 거절일 때만 다음 소스로 넘어간다.
      */
     private suspend fun getWithFallback(path: (V2Source) -> String): AdsbLolV2Response? {
         for (source in sources) {
-            val uri = path(source)
-            try {
-                val response = source.client.get()
-                    .uri(uri)
-                    .retrieve()
-                    .awaitBodyOrNull<AdsbLolV2Response>()
-                if (response?.states != null) {
-                    if (source != sources.first()) log.info("Served by fallback source ${source.name}: $uri")
-                    return response
-                }
-                log.warn("${source.name} returned empty body: $uri")
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                log.warn("${source.name} request failed ($uri): ${e.message}")
+            val response = fetchFrom(source, path(source))
+            if (response != null) {
+                if (source != sources.first()) log.info("Served by fallback source ${source.name}")
+                return response
             }
         }
         log.error("All ADS-B sources failed for request")
+        return null
+    }
+
+    /** 피드 게이트를 거친 단일 호출. 게이트 거절, 요청 실패, 빈 본문이면 null. */
+    private suspend fun fetchFrom(source: V2Source, uri: String): AdsbLolV2Response? {
+        try {
+            val response = source.gate.paced {
+                log.debug("${source.name} GET $uri")
+                source.client.get()
+                    .uri(uri)
+                    .retrieve()
+                    .awaitBodyOrNull<AdsbLolV2Response>()
+            }
+            if (response?.states != null) return response
+            log.warn("${source.name} returned no data (gate busy or empty body): $uri")
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            log.warn("${source.name} request failed ($uri): ${e.message}")
+        }
         return null
     }
 }
