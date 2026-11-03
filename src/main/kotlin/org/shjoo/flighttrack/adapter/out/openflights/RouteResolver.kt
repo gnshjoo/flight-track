@@ -1,126 +1,16 @@
 package org.shjoo.flighttrack.adapter.out.openflights
 
-import jakarta.annotation.PostConstruct
 import org.shjoo.flighttrack.domain.model.Airport
 import org.shjoo.flighttrack.domain.model.TrackWaypoint
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
-import java.net.URI
 
 @Component
-class RouteResolver {
+class RouteResolver(private val data: OpenFlightsData) {
 
     private val log = LoggerFactory.getLogger(RouteResolver::class.java)
 
-    // airline ICAO 3-letter → IATA 2-letter (e.g., "KAL" → "KE")
-    private val airlineIcaoToIata = mutableMapOf<String, String>()
-    // airline ICAO 3-letter → airline name
-    private val airlineIcaoToName = mutableMapOf<String, String>()
-
-    // (airlineIata, sourceAirportIata) → list of destination IATA codes
-    private val routeMap = mutableMapOf<String, MutableList<String>>()
-
-    // airport IATA → airport name
-    private val airportNames = mutableMapOf<String, String>()
-
-    // airport IATA → (lat, lng), loaded from OpenFlights airports.dat
-    private val airportCoords = mutableMapOf<String, Pair<Double, Double>>()
-
-    @PostConstruct
-    fun init() {
-        try {
-            loadAirlines()
-            loadRoutes()
-            loadAirports()
-            log.info("RouteResolver loaded: ${airlineIcaoToIata.size} airlines, ${routeMap.size} route pairs, ${airportNames.size} airport names, ${airportCoords.size} airport coords")
-        } catch (e: Exception) {
-            log.error("Failed to load data: ${e.message}")
-        }
-    }
-
-    /**
-     * 항공사 ICAO→IATA 매핑 (benct/iata-utils, 1100+ airlines)
-     */
-    private fun loadAirlines() {
-        val url = "https://raw.githubusercontent.com/benct/iata-utils/master/generated/iata_airlines.csv"
-        val text = URI(url).toURL().readText()
-        for (line in text.lines()) {
-            if (line.startsWith("iata_code") || line.isBlank()) continue
-            val cols = line.split("^")
-            if (cols.size < 3) continue
-            val iata = cols[0].trim()
-            val icao = cols[1].trim()
-            val name = cols[2].trim()
-            if (iata.isNotBlank() && icao.isNotBlank()) {
-                airlineIcaoToIata[icao] = iata
-                airlineIcaoToName[icao] = name
-            }
-        }
-    }
-
-    /**
-     * 노선 데이터 (OpenFlights routes.dat)
-     */
-    private fun loadRoutes() {
-        val url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/routes.dat"
-        val text = URI(url).toURL().readText()
-        for (line in text.lines()) {
-            val cols = parseCsvLine(line)
-            if (cols.size < 5) continue
-            val airline = cols[0].trim()
-            val src = cols[2].trim()
-            val dst = cols[4].trim()
-            if (airline.isNotBlank() && src.isNotBlank() && dst.isNotBlank()
-                && airline != "\\N" && src != "\\N" && dst != "\\N") {
-                val key = "$airline|$src"
-                routeMap.getOrPut(key) { mutableListOf() }.add(dst)
-            }
-        }
-    }
-
-    /**
-     * 공항 이름 + 좌표 데이터 (OpenFlights airports.dat)
-     * cols: 0=id, 1=name, 2=city, 3=country, 4=iata, 5=icao, 6=lat, 7=lng, ...
-     */
-    private fun loadAirports() {
-        val url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat"
-        val text = URI(url).toURL().readText()
-        for (line in text.lines()) {
-            val cols = parseCsvLine(line)
-            if (cols.size < 8) continue
-            val name = cols[1].trim().removeSurrounding("\"")
-            val iata = cols[4].trim().removeSurrounding("\"")
-            if (iata.isBlank() || iata == "\\N" || iata.length != 3) continue
-            airportNames[iata] = name
-            val lat = cols[6].trim().removeSurrounding("\"").toDoubleOrNull()
-            val lng = cols[7].trim().removeSurrounding("\"").toDoubleOrNull()
-            if (lat != null && lng != null) {
-                airportCoords[iata] = lat to lng
-            }
-        }
-    }
-
-    fun getAirport(code: String): Airport? {
-        val iata = code.uppercase()
-        val coords = airportCoords[iata] ?: return null
-        val name = airportNames[iata] ?: iata
-        return Airport(iata = iata, name = name, lat = coords.first, lng = coords.second)
-    }
-
-    private fun parseCsvLine(line: String): List<String> {
-        val result = mutableListOf<String>()
-        var current = StringBuilder()
-        var inQuotes = false
-        for (ch in line) {
-            when {
-                ch == '"' -> inQuotes = !inQuotes
-                ch == ',' && !inQuotes -> { result.add(current.toString()); current = StringBuilder() }
-                else -> current.append(ch)
-            }
-        }
-        result.add(current.toString())
-        return result
-    }
+    fun getAirport(code: String): Airport? = data.airports[code.uppercase()]
 
     /**
      * callsign + waypoints → (departure, arrival)
@@ -157,11 +47,11 @@ class RouteResolver {
 
         // 지상 waypoint로 출발공항 확정된 경우
         if (depFromGround != null) {
-            log.info("Departure from ground waypoint: $depFromGround")
-            val arrival = arrFromGround
+            log.info("Departure from ground waypoint: ${depFromGround.iata}")
+            val arrival = arrFromGround?.iata
                 ?: resolveDestinationFromRouteDB(airlineIata, depFromGround, sorted)
-            log.info("Route resolved: $depFromGround → $arrival (callsign=$trimmed)")
-            return depFromGround to arrival
+            log.info("Route resolved: ${depFromGround.iata} → $arrival (callsign=$trimmed)")
+            return depFromGround.iata to arrival
         }
 
         // 2단계: 지상 waypoint 없음 → 첫 waypoint 근처 공항 + route DB로 도착지 결정
@@ -176,14 +66,14 @@ class RouteResolver {
             for (dep in nearFirst) {
                 val arrival = resolveDestinationFromRouteDB(airlineIata, dep, sorted)
                 if (arrival != null) {
-                    log.info("Route resolved: $dep → $arrival (callsign=$trimmed, airline=$airlineIata)")
-                    return dep to arrival
+                    log.info("Route resolved: ${dep.iata} → $arrival (callsign=$trimmed, airline=$airlineIata)")
+                    return dep.iata to arrival
                 }
             }
         }
 
         // 3단계: route DB 매칭 실패 → 출발공항만 반환
-        val depAirport = nearFirst.firstOrNull()
+        val depAirport = nearFirst.firstOrNull()?.iata
         log.info("Route fallback (no route DB match): dep=$depAirport (callsign=$trimmed)")
         return depAirport to null
     }
@@ -193,9 +83,9 @@ class RouteResolver {
         val airlineIcao = callsign.take(3).takeIf { it.all { c -> c.isLetter() } }
             ?: callsign.take(2).takeIf { it.all { c -> c.isLetter() } }
             ?: return null
-        val iata = airlineIcaoToIata[airlineIcao]
+        val iata = data.airlineIataByIcao[airlineIcao]
         if (iata != null) {
-            log.info("Airline resolved: $airlineIcao → $iata (${airlineIcaoToName[airlineIcao]})")
+            log.info("Airline resolved: $airlineIcao → $iata (${data.airlineNameByIcao[airlineIcao]})")
         } else {
             log.warn("Airline ICAO '$airlineIcao' not found (callsign='$callsign')")
         }
@@ -204,13 +94,12 @@ class RouteResolver {
 
     private fun resolveDestinationFromRouteDB(
         airlineIata: String?,
-        depAirport: String,
+        depAirport: Airport,
         sortedWaypoints: List<TrackWaypoint>
     ): String? {
         if (airlineIata == null) return null
 
-        val key = "$airlineIata|$depAirport"
-        val destinations = routeMap[key]
+        val destinations = data.destinationsByRoute[RouteKey(airlineIata, depAirport.iata)]
         if (destinations.isNullOrEmpty()) return null
 
         if (destinations.size == 1) return destinations[0]
@@ -223,8 +112,8 @@ class RouteResolver {
 
         return destinations
             .mapNotNull { dst ->
-                val dstCoords = airportCoords[dst] ?: return@mapNotNull null
-                val bearingFromCurrent = calcBearing(last.latitude, last.longitude, dstCoords.first, dstCoords.second)
+                val dstAirport = data.airports[dst] ?: return@mapNotNull null
+                val bearingFromCurrent = calcBearing(last.latitude, last.longitude, dstAirport.lat, dstAirport.lng)
                 val diff = angleDiff(heading, bearingFromCurrent)
                 dst to diff
             }
@@ -233,16 +122,16 @@ class RouteResolver {
             ?: destinations[0]
     }
 
-    fun findNearestAirport(lat: Double, lng: Double, maxDistSq: Double): String? {
+    fun findNearestAirport(lat: Double, lng: Double, maxDistSq: Double): Airport? {
         return findNearbyAirports(lat, lng, maxDistSq, 1).firstOrNull()
     }
 
-    private fun findNearbyAirports(lat: Double, lng: Double, maxDistSq: Double, limit: Int): List<String> {
-        return airportCoords.entries
-            .map { (iata, coords) ->
-                val dlat = coords.first - lat
-                val dlng = coords.second - lng
-                iata to (dlat * dlat + dlng * dlng)
+    private fun findNearbyAirports(lat: Double, lng: Double, maxDistSq: Double, limit: Int): List<Airport> {
+        return data.airports.values
+            .map { airport ->
+                val dlat = airport.lat - lat
+                val dlng = airport.lng - lng
+                airport to (dlat * dlat + dlng * dlng)
             }
             .filter { it.second < maxDistSq }
             .sortedBy { it.second }
