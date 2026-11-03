@@ -3,7 +3,6 @@ package org.shjoo.flighttrack.adapter.out.adsblol
 import io.netty.channel.ChannelOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolV2Response
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
@@ -32,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 위치 조회는 adsb.lol 과 adsb.fi(동일 포맷)를 함께 불러 합치고, 콜사인/icao 조회는 adsb.lol 실패 시 adsb.fi 로 폴백한다.
  * OpenSky 는 클라우드(AWS 등) IP 대역에서의 접속을 네트워크 레벨에서 차단하여
  * Vercel 배포 환경에서 사용할 수 없다. 위치 조회는 point+radius(최대 250nm)
- * 방식이므로 bbox 를 외접원으로 변환해 조회한다.
+ * 방식이므로 bbox 를 고정 격자 칸으로 나눠 칸마다 원으로 조회한다([AircraftTiles]).
  */
 @Component
 class AdsbAircraftAdapter(
@@ -96,19 +95,14 @@ class AdsbAircraftAdapter(
         TraceSource("adsb.lol", "https://adsb.lol", "https://globe.adsb.lol/"),
     )
 
-    // bbox 미지정 시 기본 조회 지역: 한반도 중심, 최대 반경
-    private val DEFAULT_LAT = 36.5
-    private val DEFAULT_LON = 127.8
+    private val tiles = AircraftTiles(
+        feeds = sources.map { source -> { c: Circle -> fetchFrom(source, source.pointPath(c.lat, c.lon, c.radiusNm)) } }
+    )
 
-    private val snapshotCache = ConcurrentHashMap<String, Pair<Long, AircraftSnapshot>>()
-    private val SNAPSHOT_CACHE_MS = 30_000L
     private val trackCache = ConcurrentHashMap<String, Pair<Long, Track>>()
     private val TRACK_CACHE_MS = 30_000L
 
-    override suspend fun fetchAircraft(box: BoundingBox?): AircraftSnapshot {
-        val (lat, lon, radiusNm) = box?.toCircle() ?: Circle(DEFAULT_LAT, DEFAULT_LON, MAX_RADIUS_NM)
-        return fetchPoint(lat, lon, radiusNm)
-    }
+    override suspend fun fetchAircraft(box: BoundingBox?): AircraftSnapshot = tiles.snapshot(box)
 
     override suspend fun fetchAircraftByCallsign(callsign: String): AircraftSnapshot {
         val key = callsign.trim().uppercase()
@@ -116,13 +110,12 @@ class AdsbAircraftAdapter(
         val exact = getWithFallback { it.callsignPath(key) }
         val exactStates = exact?.let { r -> r.states.orEmpty().mapNotNull { it.toState(r.nowSeconds) } }.orEmpty()
         if (exactStates.isNotEmpty()) {
-            return AircraftSnapshot(time = exact!!.epochSeconds, aircraft = exactStates)
+            return AircraftSnapshot(time = exact!!.epochSeconds, aircraft = exactStates, servedAt = System.currentTimeMillis() / 1000.0)
         }
 
         // 정확 매칭이 없으면(예: "KE" 같은 항공사 prefix 검색) 기본 지역 스냅샷에서 부분 매칭
-        val regional = fetchPoint(DEFAULT_LAT, DEFAULT_LON, MAX_RADIUS_NM)
-        val filtered = regional.aircraft.filter { it.callsign.contains(key, ignoreCase = true) }
-        return AircraftSnapshot(time = regional.time, aircraft = filtered)
+        val regional = fetchAircraft(null)
+        return regional.copy(aircraft = regional.aircraft.filter { it.callsign.contains(key, ignoreCase = true) })
     }
 
     override suspend fun fetchTrack(icao24: Icao24): Track {
@@ -221,36 +214,6 @@ class AdsbAircraftAdapter(
             }
         }
         return null
-    }
-
-    private suspend fun fetchPoint(lat: Double, lon: Double, radiusNm: Int): AircraftSnapshot {
-        val now = System.currentTimeMillis()
-        val cacheKey = "%.2f/%.2f/%d".format(lat, lon, radiusNm)
-
-        snapshotCache[cacheKey]?.let { (ts, snapshot) ->
-            if ((now - ts) < SNAPSHOT_CACHE_MS) return snapshot
-        }
-
-        val responses = coroutineScope {
-            sources.map { source -> async { fetchFrom(source, source.pointPath(lat, lon, radiusNm)) } }.awaitAll()
-        }.filterNotNull()
-        if (responses.isEmpty()) {
-            return snapshotCache[cacheKey]?.second ?: throw UpstreamUnavailableException("adsb")
-        }
-
-        val aircraft = mergeFreshest(responses.map { r -> r.states.orEmpty().mapNotNull { it.toState(r.nowSeconds) } })
-        val result = AircraftSnapshot(
-            time = responses.minOf { it.epochSeconds }.takeIf { it > 0 } ?: (now / 1000),
-            aircraft = aircraft
-        )
-        snapshotCache[cacheKey] = now to result
-
-        if (snapshotCache.size > 50) {
-            val cutoff = now - SNAPSHOT_CACHE_MS * 10
-            snapshotCache.entries.removeIf { it.value.first < cutoff }
-        }
-
-        return result
     }
 
     /**

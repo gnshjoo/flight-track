@@ -3,7 +3,6 @@ package org.shjoo.flighttrack.adapter.out.adsblol
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolAircraft
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
 import org.shjoo.flighttrack.domain.model.AircraftState
-import org.shjoo.flighttrack.domain.model.BoundingBox
 import org.shjoo.flighttrack.domain.model.TrackWaypoint
 import kotlin.math.asin
 import kotlin.math.cos
@@ -45,13 +44,6 @@ internal fun AdsbLolAircraft.toState(nowSeconds: Double): AircraftState? {
 }
 
 internal data class Circle(val lat: Double, val lon: Double, val radiusNm: Int)
-
-internal fun BoundingBox.toCircle(): Circle {
-    val centerLat = (lamin + lamax) / 2
-    val centerLon = (lomin + lomax) / 2
-    val radius = haversineNm(centerLat, centerLon, lamax, lomax)
-    return Circle(centerLat, centerLon, radius.toInt().coerceIn(1, MAX_RADIUS_NM))
-}
 
 internal fun haversineNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val dLat = Math.toRadians(lat2 - lat1)

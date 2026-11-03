@@ -5,7 +5,6 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolAircraft
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolV2Response
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
-import org.shjoo.flighttrack.domain.model.BoundingBox
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -62,20 +61,6 @@ class AdsbMappingTest {
         val fiSeenAt = fi.states!!.single().toState(fi.nowSeconds)!!.seenAt!!
         assertEquals(1_762_160_003.1, lolSeenAt, 1e-3)
         assertEquals(1_762_160_003.1, fiSeenAt, 1e-3)
-    }
-
-    @Test
-    fun `bbox converts to a circle centred on the box`() {
-        val circle = BoundingBox.fromParams(35.0, 126.0, 37.0, 128.0)!!.toCircle()
-        assertEquals(36.0, circle.lat, 1e-9)
-        assertEquals(127.0, circle.lon, 1e-9)
-        assertTrue(circle.radiusNm in 75..79)
-    }
-
-    @Test
-    fun `circle radius is clamped to 250 nm and at least 1 nm`() {
-        assertEquals(250, BoundingBox.fromParams(20.0, 100.0, 50.0, 150.0)!!.toCircle().radiusNm)
-        assertEquals(1, BoundingBox.fromParams(36.0, 127.0, 36.0, 127.0)!!.toCircle().radiusNm)
     }
 
     @Test

@@ -33,9 +33,9 @@
 
 | 소스 | 용도 |
 |-----|------|
-| **[adsb.lol](https://api.adsb.lol)** | 실시간 항공기 위치 (`/v2/point`, `/v2/callsign`, `/v2/icao`) + Callsign 기반 노선 결정 (`/api/0/routeset`) |
+| **[adsb.lol](https://api.adsb.lol)** | 실시간 항공기 위치 (`/v2/point`, `/v2/callsign`, `/v2/icao`, adsb.fi 와 병합) + Callsign 기반 노선 결정 (`/api/0/routeset`) |
 | **[adsbdb.com](https://www.adsbdb.com)** | adsb.lol routeset 에 노선이 없을 때 쓰는 Callsign 노선 DB (`/v0/callsign/{callsign}`) |
-| **[adsb.fi](https://adsb.fi)** | adsb.lol 장애 시 폴백 (동일 readsb v2 포맷, `/api/v2/*`) |
+| **[adsb.fi](https://adsb.fi)** | 실시간 항공기 위치를 adsb.lol 과 함께 조회해 기체별로 더 최근 위치를 쓴다. 콜사인/icao 조회는 adsb.lol 장애 시 폴백 (동일 readsb v2 포맷, `/api/v2/*`) |
 | **[hexdb.io](https://hexdb.io)** | ICAO24 기반 항공기 메타데이터 (등록번호, 기종, 운항사) |
 | **[OpenFlights](https://openflights.org/data.html)** | `airports.dat` / `routes.dat` — 공항 좌표·이름 + 항공사 노선 DB (jar 에 번들) |
 | **[benct/iata-utils](https://github.com/benct/iata-utils)** | 항공사 ICAO(3-letter) → IATA(2-letter) 매핑 (jar 에 번들) |
@@ -143,8 +143,13 @@ flight-track/
 │   │   │   │   │   └── TrackingController.kt
 │   │   │   │   └── out/                            # 아웃바운드 어댑터
 │   │   │   │       ├── adsblol/
-│   │   │   │       │   ├── AdsbAircraftAdapter.kt      # 실시간 위치/경로 (adsb.lol → adsb.fi 폴백)
-│   │   │   │       │   ├── AdsbMapping.kt              # 단위 변환, bbox→원, trace 파싱 (순수 함수)
+│   │   │   │       │   ├── AdsbAircraftAdapter.kt      # 실시간 위치/경로 (HTTP 호출, 피드별 게이트)
+│   │   │   │       │   ├── AircraftTiles.kt            # bbox → 타일 조회 → 두 피드 병합 → 스냅샷
+│   │   │   │       │   ├── Tiling.kt                   # 전 지구 고정 격자 (순수 함수)
+│   │   │   │       │   ├── TileSnapshotCache.kt        # 타일별 10초 캐시, single-flight, stale 폴백
+│   │   │   │       │   ├── FeedGate.kt                 # 피드별 호출 간격 제한
+│   │   │   │       │   ├── AircraftMerge.kt            # icao24 기준 최신 위치 병합 (순수 함수)
+│   │   │   │       │   ├── AdsbMapping.kt              # 단위 변환, trace 파싱 (순수 함수)
 │   │   │   │       │   └── dto/
 │   │   │   │       │       └── AdsbLolV2Response.kt    # readsb v2 응답 DTO
 │   │   │   │       ├── hexdb/
@@ -179,13 +184,18 @@ flight-track/
 
 | 대상 | TTL | 방식 | 설명 |
 |------|-----|------|------|
-| 실시간 항공기 스냅샷 (`/v2/point`) | 30초 | `ConcurrentHashMap` | 조회 원(중심점/반경) 단위, 50건 초과 시 만료 엔트리 제거 |
+| 실시간 항공기 타일 (`/v2/point`) | 10초 (stale 120초) | `ConcurrentHashMap` + 타일별 `Mutex` | 고정 격자 칸 단위로 모든 사용자가 공유. 갱신 실패 시 120초 이내 직전 값을 반환 |
+| 피드 호출 게이트 | 1.2초 간격 | 피드별 `FeedGate` | adsb.lol, adsb.fi 각각 호출 시작을 1.2초에 한 번으로 제한. 7.5초 넘게 기다려야 하면 호출하지 않는다 |
 | 항공기 현재 경로 (`/v2/icao`) | 30초 | `ConcurrentHashMap` | icao24 단위, 100건 초과 시 만료 엔트리 제거 |
 | 항공기 메타데이터 (hexdb.io) | 5분 | `ConcurrentHashMap` | 200건 초과 시 만료 엔트리 제거 |
 | callsign 노선 lookup (positive) | 2시간 | `ConcurrentHashMap` | callsign 단위, adsb.lol·adsbdb 중 답한 쪽 |
 | callsign 노선 lookup (negative) | 15분 | `ConcurrentHashMap` | 두 노선 DB 모두 miss 일 때 재조회 간격 |
 
-실시간 조회는 adsb.lol 실패 시 adsb.fi 로 폴백하며, 둘 다 실패해도 직전 캐시가 있으면 그 값을 반환합니다.
+### 타일 조회
+
+bbox 는 위도 5°, 폭 400 nm 이하인 전 지구 고정 격자 칸으로 나누고, 칸마다 중심의 250 nm 원을 adsb.lol 과 adsb.fi 에 동시에 조회해 icao24 기준으로 합칩니다. 칸이 고정이라 같은 지역을 보는 사용자는 같은 캐시를 씁니다. 한 번에 최대 6칸까지 bbox 중심에서 가까운 순으로 조회하며, 6칸을 넘어 잘렸거나 데이터가 없는 칸이 있으면 응답의 `partial` 이 `true` 입니다. 위도 75° 너머는 조회하지 않습니다.
+
+응답의 `time` 은 가장 오래된 타일을 받은 시각, `servedAt` 은 서버가 응답을 만든 시각(초, ms 정밀도), 항공기별 `seenAt` 은 피드가 그 위치를 수신한 시각입니다. 클라이언트는 `servedAt - seenAt` 으로 위치의 나이를 구할 수 있습니다.
 
 ## API 엔드포인트
 

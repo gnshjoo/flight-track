@@ -28,7 +28,7 @@ class TrackingController(
 ) {
 
     @GetMapping("/aircraft")
-    @Operation(summary = "실시간 항공기 위치 조회", description = "Callsign 검색 또는 지도 범위로 항공기를 조회합니다. 30초 캐시 적용")
+    @Operation(summary = "실시간 항공기 위치 조회", description = "Callsign 검색 또는 지도 범위로 항공기를 조회합니다. 10초 캐시 적용")
     suspend fun getAircraft(
         @Parameter(description = "콜사인 검색 (예: YP102, KE)", example = "KE") @RequestParam(required = false) callsign: String?,
         @Parameter(description = "최소 위도") @RequestParam(required = false) lamin: Double?,
