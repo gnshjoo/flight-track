@@ -15,6 +15,9 @@ internal const val FT_TO_M = 0.3048
 internal const val KT_TO_MS = 0.514444
 internal const val FPM_TO_MS = 0.00508
 internal const val MAX_RADIUS_NM = 250
+
+// 착륙 후에도 trace 파일은 남아 있어, 오래된 경로를 현재 비행으로 오인하지 않도록 버린다
+internal const val TRACE_MAX_AGE_S = 7_200L
 private const val EARTH_RADIUS_NM = 3440.065
 
 internal fun AdsbLolAircraft.toState(): AircraftState? {
@@ -55,11 +58,12 @@ internal data class ParsedTrace(val waypoints: List<TrackWaypoint>, val callsign
 
 /**
  * tar1090 trace 에서 현재 비행 구간(flags 비트 2 = 새 leg 시작, 마지막 마커 이후)만 잘라
- * waypoint 로 변환한다. 쓸 수 있는 점이 없으면 null.
+ * waypoint 로 변환한다. 쓸 수 있는 점이 없거나 마지막 점이 [maxAgeSeconds] 보다 오래되면 null.
  */
 internal fun parseTrace(
     response: AdsbTraceResponse,
     nowEpochSeconds: Long,
+    maxAgeSeconds: Long = TRACE_MAX_AGE_S,
     maxPoints: Int = 600,
 ): ParsedTrace? {
     val trace = response.trace
@@ -86,6 +90,7 @@ internal fun parseTrace(
             )
         }
     if (waypoints.isEmpty()) return null
+    if (nowEpochSeconds - waypoints.last().time > maxAgeSeconds) return null
 
     val callsign = leg.mapNotNull { p -> ((p.getOrNull(8) as? Map<*, *>)?.get("flight") as? String)?.trim()?.ifBlank { null } }
         .lastOrNull()

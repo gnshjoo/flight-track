@@ -58,6 +58,13 @@ class RouteResolver(private val data: OpenFlightsData) {
         // ※ 마지막 waypoint는 현재 비행 위치일 뿐 도착지가 아님 → 도착지는 반드시 route DB에서 결정
         val firstWp = sorted.first()
 
+        // 순항 중인 첫 점은 출발지에 대해 아무것도 알려주지 않는다
+        val nearDeparture = firstWp.onGround || (firstWp.altitude ?: Double.MAX_VALUE) < DEPARTURE_MAX_ALTITUDE_M
+        if (!nearDeparture) {
+            log.info("Route unresolved: first waypoint is airborne at ${firstWp.altitude} m (callsign=$trimmed)")
+            return null to null
+        }
+
         // 첫 waypoint 근처 공항 후보들 (넓은 범위)
         val nearFirst = findNearbyAirports(firstWp.latitude, firstWp.longitude, 2.0, 5)
 
@@ -108,7 +115,7 @@ class RouteResolver(private val data: OpenFlightsData) {
         // 예: PUS 위를 지나가면서 ICN 방향(310°)으로 비행 중이면
         //     현재위치→ICN 방위가 heading과 일치 → ICN 선택
         val last = sortedWaypoints.last()
-        val heading = last.heading ?: return destinations[0]
+        val heading = last.heading ?: return null
 
         return destinations
             .mapNotNull { dst ->
@@ -151,5 +158,9 @@ class RouteResolver(private val data: OpenFlightsData) {
     private fun angleDiff(a: Double, b: Double): Double {
         val diff = Math.abs(a - b) % 360
         return if (diff > 180) 360 - diff else diff
+    }
+
+    private companion object {
+        const val DEPARTURE_MAX_ALTITUDE_M = 3_000.0
     }
 }

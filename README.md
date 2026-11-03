@@ -91,8 +91,11 @@
 1. **adsb.lol routeset** — callsign으로 노선 DB 조회 (결정적, 2시간 positive / 15분 negative 캐시)
 2. **RouteResolver 휴리스틱** — adsb.lol 매칭 실패 시
    - 지상(`onGround=true`) waypoint 근접 공항으로 출발/도착 식별
+   - 지상 waypoint가 없으면 첫 waypoint가 고도 3,000 m 미만일 때만 그 근처 공항을 출발지로 본다. 순항 고도에서 시작한 경로는 출발/도착 모두 `null`
    - OpenFlights `routes.dat` + 항공사 IATA로 도착지 후보 추정
-   - 후보가 여럿이면 마지막 waypoint의 heading과 일치하는 방향의 공항 선택
+   - 후보가 여럿이면 마지막 waypoint의 heading과 일치하는 방향의 공항 선택. heading이 없으면 도착지는 `null`
+
+경로(`path`)는 globe trace 를 쓰되, trace 의 마지막 점이 2시간보다 오래됐으면 이전 비행의 기록으로 보고 버린다. 이 경우 REST 로 받은 현재 위치 1개만 경로로 쓴다.
 
 ## 디렉토리 구조
 
