@@ -1,12 +1,13 @@
-package org.shjoo.flighttrack.adapter.out.adsblol
+package org.shjoo.flighttrack.adapter.out.route
 
 import io.netty.channel.ChannelOption
-import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolPlaneQuery
-import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolRouteEntry
-import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolRouteRequest
+import org.shjoo.flighttrack.adapter.out.route.dto.AdsbLolPlaneQuery
+import org.shjoo.flighttrack.adapter.out.route.dto.AdsbLolRouteEntry
+import org.shjoo.flighttrack.adapter.out.route.dto.AdsbLolRouteRequest
 import org.shjoo.flighttrack.domain.model.FlightRoute
 import org.shjoo.flighttrack.domain.port.out.FlightRoutePort
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
@@ -16,20 +17,18 @@ import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
 @Component
-class AdsbLolRouteAdapter : FlightRoutePort {
+class CallsignRouteAdapter internal constructor(
+    private val routesetClient: WebClient,
+    private val adsbdbClient: WebClient,
+) : FlightRoutePort {
 
-    private val log = LoggerFactory.getLogger(AdsbLolRouteAdapter::class.java)
+    @Autowired
+    constructor() : this(
+        defaultClient("https://api.adsb.lol", 2 * 1024 * 1024),
+        defaultClient("https://api.adsbdb.com", 1024 * 1024),
+    )
 
-    private val client: WebClient by lazy {
-        val httpClient = HttpClient.create()
-            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
-            .responseTimeout(Duration.ofSeconds(15))
-        WebClient.builder()
-            .baseUrl("https://api.adsb.lol")
-            .clientConnector(ReactorClientHttpConnector(httpClient))
-            .codecs { it.defaultCodecs().maxInMemorySize(2 * 1024 * 1024) }
-            .build()
-    }
+    private val log = LoggerFactory.getLogger(CallsignRouteAdapter::class.java)
 
     // callsign → (timestamp, route). 캐시 miss 결과는 별도 NEGATIVE set 으로 관리하여
     // null 값 저장이 불가능한 ConcurrentHashMap 제약 회피.
@@ -61,7 +60,7 @@ class AdsbLolRouteAdapter : FlightRoutePort {
             val body = AdsbLolRouteRequest(
                 planes = listOf(AdsbLolPlaneQuery(key, lat ?: 0.0, lng ?: 0.0))
             )
-            val response = client.post()
+            val response = routesetClient.post()
                 .uri("/api/0/routeset")
                 .bodyValue(body)
                 .retrieve()
@@ -108,5 +107,19 @@ class AdsbLolRouteAdapter : FlightRoutePort {
             val cutoff = now - NEGATIVE_TTL_MS
             negativeCache.entries.removeIf { it.value < cutoff }
         }
+    }
+
+    private companion object {
+        fun defaultClient(baseUrl: String, maxInMemorySize: Int): WebClient = WebClient.builder()
+            .baseUrl(baseUrl)
+            .clientConnector(
+                ReactorClientHttpConnector(
+                    HttpClient.create()
+                        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+                        .responseTimeout(Duration.ofSeconds(15))
+                )
+            )
+            .codecs { it.defaultCodecs().maxInMemorySize(maxInMemorySize) }
+            .build()
     }
 }

@@ -72,7 +72,7 @@
                     │     └─ AircraftTrackPort             │
                     │   HexDbMetadataAdapter               │
                     │     └─ AircraftMetadataPort          │
-                    │   AdsbLolRouteAdapter                │
+                    │   CallsignRouteAdapter               │
                     │     └─ FlightRoutePort               │
                     │   RouteResolver                      │
                     │     └─ OpenFlights routes/airports   │
@@ -144,14 +144,16 @@ flight-track/
 │   │   │   │       ├── adsblol/
 │   │   │   │       │   ├── AdsbAircraftAdapter.kt      # 실시간 위치/경로 (adsb.lol → adsb.fi 폴백)
 │   │   │   │       │   ├── AdsbMapping.kt              # 단위 변환, bbox→원, trace 파싱 (순수 함수)
-│   │   │   │       │   ├── AdsbLolRouteAdapter.kt      # callsign → 노선 lookup
 │   │   │   │       │   └── dto/
-│   │   │   │       │       ├── AdsbLolV2Response.kt    # readsb v2 응답 DTO
-│   │   │   │       │       └── AdsbLolRouteResponse.kt
+│   │   │   │       │       └── AdsbLolV2Response.kt    # readsb v2 응답 DTO
 │   │   │   │       ├── hexdb/
 │   │   │   │       │   ├── HexDbMetadataAdapter.kt     # 항공기 메타데이터
 │   │   │   │       │   └── dto/
 │   │   │   │       │       └── HexDbResponse.kt
+│   │   │   │       ├── route/
+│   │   │   │       │   ├── CallsignRouteAdapter.kt     # callsign → 노선 lookup
+│   │   │   │       │   └── dto/
+│   │   │   │       │       └── AdsbLolRouteResponse.kt
 │   │   │   │       └── openflights/
 │   │   │   │           ├── OpenFlightsData.kt          # 번들 데이터 파서 (불변)
 │   │   │   │           └── RouteResolver.kt            # 휴리스틱 노선 추정

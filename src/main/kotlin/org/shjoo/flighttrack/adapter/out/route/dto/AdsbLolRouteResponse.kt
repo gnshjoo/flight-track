@@ -1,4 +1,4 @@
-package org.shjoo.flighttrack.adapter.out.adsblol.dto
+package org.shjoo.flighttrack.adapter.out.route.dto
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
