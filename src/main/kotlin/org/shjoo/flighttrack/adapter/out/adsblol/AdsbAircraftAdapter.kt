@@ -173,7 +173,7 @@ class AdsbAircraftAdapter(
         if (adsbLolRoute != null) {
             depAirport = adsbLolRoute.departureIata
             arrAirport = adsbLolRoute.arrivalIata
-            log.info("Route from adsb.lol for $key (callsign=$callsign): $depAirport → $arrAirport plausible=${adsbLolRoute.plausible}")
+            log.info("Route from callsign DB for $key (callsign=$callsign): $depAirport → $arrAirport plausible=${adsbLolRoute.plausible}")
         } else {
             val (dep, arr) = routeResolver.resolveRoute(callsign, waypoints)
             depAirport = dep

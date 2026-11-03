@@ -34,6 +34,7 @@
 | 소스 | 용도 |
 |-----|------|
 | **[adsb.lol](https://api.adsb.lol)** | 실시간 항공기 위치 (`/v2/point`, `/v2/callsign`, `/v2/icao`) + Callsign 기반 노선 결정 (`/api/0/routeset`) |
+| **[adsbdb.com](https://www.adsbdb.com)** | adsb.lol routeset 에 노선이 없을 때 쓰는 Callsign 노선 DB (`/v0/callsign/{callsign}`) |
 | **[adsb.fi](https://adsb.fi)** | adsb.lol 장애 시 폴백 (동일 readsb v2 포맷, `/api/v2/*`) |
 | **[hexdb.io](https://hexdb.io)** | ICAO24 기반 항공기 메타데이터 (등록번호, 기종, 운항사) |
 | **[OpenFlights](https://openflights.org/data.html)** | `airports.dat` / `routes.dat` — 공항 좌표·이름 + 항공사 노선 DB (jar 에 번들) |
@@ -88,8 +89,8 @@
 
 `/api/tracking/track` 응답의 `estDepartureAirport`, `estArrivalAirport`는 다음 우선순위로 결정됩니다.
 
-1. **adsb.lol routeset** — callsign으로 노선 DB 조회 (결정적, 2시간 positive / 15분 negative 캐시)
-2. **RouteResolver 휴리스틱** — adsb.lol 매칭 실패 시
+1. **callsign 노선 DB** — adsb.lol routeset → adsbdb.com 순으로 callsign 노선 DB 조회 (결정적, 2시간 positive / 15분 negative 캐시)
+2. **RouteResolver 휴리스틱** — 두 노선 DB 모두 매칭 실패 시
    - 지상(`onGround=true`) waypoint 근접 공항으로 출발/도착 식별
    - 지상 waypoint가 없으면 첫 waypoint가 고도 3,000 m 미만일 때만 그 근처 공항을 출발지로 본다. 순항 고도에서 시작한 경로는 출발/도착 모두 `null`
    - OpenFlights `routes.dat` + 항공사 IATA로 도착지 후보 추정
@@ -151,9 +152,10 @@ flight-track/
 │   │   │   │       │   └── dto/
 │   │   │   │       │       └── HexDbResponse.kt
 │   │   │   │       ├── route/
-│   │   │   │       │   ├── CallsignRouteAdapter.kt     # callsign → 노선 lookup
+│   │   │   │       │   ├── CallsignRouteAdapter.kt     # callsign → 노선 lookup (adsb.lol → adsbdb 폴백)
 │   │   │   │       │   └── dto/
-│   │   │   │       │       └── AdsbLolRouteResponse.kt
+│   │   │   │       │       ├── AdsbLolRouteResponse.kt
+│   │   │   │       │       └── AdsbdbResponse.kt
 │   │   │   │       └── openflights/
 │   │   │   │           ├── OpenFlightsData.kt          # 번들 데이터 파서 (불변)
 │   │   │   │           └── RouteResolver.kt            # 휴리스틱 노선 추정
@@ -180,8 +182,8 @@ flight-track/
 | 실시간 항공기 스냅샷 (`/v2/point`) | 30초 | `ConcurrentHashMap` | 조회 원(중심점/반경) 단위, 50건 초과 시 만료 엔트리 제거 |
 | 항공기 현재 경로 (`/v2/icao`) | 30초 | `ConcurrentHashMap` | icao24 단위, 100건 초과 시 만료 엔트리 제거 |
 | 항공기 메타데이터 (hexdb.io) | 5분 | `ConcurrentHashMap` | 200건 초과 시 만료 엔트리 제거 |
-| adsb.lol 노선 lookup (positive) | 2시간 | `ConcurrentHashMap` | callsign 단위 |
-| adsb.lol 노선 lookup (negative) | 15분 | `ConcurrentHashMap` | 노선 DB miss 재조회 간격 |
+| callsign 노선 lookup (positive) | 2시간 | `ConcurrentHashMap` | callsign 단위, adsb.lol·adsbdb 중 답한 쪽 |
+| callsign 노선 lookup (negative) | 15분 | `ConcurrentHashMap` | 두 노선 DB 모두 miss 일 때 재조회 간격 |
 
 실시간 조회는 adsb.lol 실패 시 adsb.fi 로 폴백하며, 둘 다 실패해도 직전 캐시가 있으면 그 값을 반환합니다.
 
@@ -215,7 +217,7 @@ flight-track/
 
 ### 환경 변수
 
-필요 없습니다 — adsb.lol, adsb.fi, hexdb.io 모두 인증 없이 호출됩니다. OpenFlights 데이터(ODbL 라이선스, 출처: [openflights.org](https://openflights.org/data.html))와 항공사 코드표는 `src/main/resources/openflights` 에 번들되어 있어 기동 시 외부 다운로드가 없습니다. 갱신하려면 같은 이름의 파일을 교체합니다.
+필요 없습니다 — adsb.lol, adsb.fi, adsbdb.com, hexdb.io 모두 인증 없이 호출됩니다. OpenFlights 데이터(ODbL 라이선스, 출처: [openflights.org](https://openflights.org/data.html))와 항공사 코드표는 `src/main/resources/openflights` 에 번들되어 있어 기동 시 외부 다운로드가 없습니다. 갱신하려면 같은 이름의 파일을 교체합니다.
 
 ### 실행
 

@@ -1,9 +1,11 @@
 package org.shjoo.flighttrack.adapter.out.route
 
 import io.netty.channel.ChannelOption
+import kotlinx.coroutines.CancellationException
 import org.shjoo.flighttrack.adapter.out.route.dto.AdsbLolPlaneQuery
 import org.shjoo.flighttrack.adapter.out.route.dto.AdsbLolRouteEntry
 import org.shjoo.flighttrack.adapter.out.route.dto.AdsbLolRouteRequest
+import org.shjoo.flighttrack.adapter.out.route.dto.AdsbdbResponse
 import org.shjoo.flighttrack.domain.model.FlightRoute
 import org.shjoo.flighttrack.domain.port.out.FlightRoutePort
 import org.slf4j.LoggerFactory
@@ -11,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
 import org.springframework.web.reactive.function.client.awaitBodyOrNull
 import reactor.netty.http.client.HttpClient
 import java.time.Duration
@@ -56,33 +59,65 @@ class CallsignRouteAdapter internal constructor(
             if ((now - ts) < NEGATIVE_TTL_MS) return null
         }
 
-        return try {
-            val body = AdsbLolRouteRequest(
-                planes = listOf(AdsbLolPlaneQuery(key, lat ?: 0.0, lng ?: 0.0))
-            )
-            val response = routesetClient.post()
-                .uri("/api/0/routeset")
-                .bodyValue(body)
-                .retrieve()
-                .awaitBodyOrNull<List<AdsbLolRouteEntry>>()
+        var failed = false
+        suspend fun attempt(source: String, fetch: suspend () -> FlightRoute?): FlightRoute? =
+            try {
+                fetch()?.also { log.info("$source route: $key → ${it.departureIata}-${it.arrivalIata} plausible=${it.plausible}") }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                log.warn("$source route lookup failed for $key: ${e.message}")
+                failed = true
+                null
+            }
 
-            val entry = response?.firstOrNull { it.callsign.trim().equals(key, ignoreCase = true) }
-                ?: response?.firstOrNull()
-            val route = entry?.toFlightRoute()
+        val route = attempt("adsb.lol") { fetchRouteset(key, lat, lng) }
+            ?: attempt("adsbdb") { fetchAdsbdb(key) }
 
-            if (route != null) {
+        when {
+            route != null -> {
                 positiveCache[key] = now to route
                 negativeCache.remove(key)
-                log.info("adsb.lol route: $key → ${route.departureIata}-${route.arrivalIata} plausible=${route.plausible}")
-            } else {
+            }
+            // 한쪽이 실패했으면 '노선 없음'이 확정이 아니므로 negative 캐시하지 않고 직전 값을 쓴다.
+            failed -> return positiveCache[key]?.second
+            else -> {
+                log.debug("no callsign route for {} in adsb.lol or adsbdb", key)
                 negativeCache[key] = now
             }
-            evictIfOversized(now)
-            route
-        } catch (e: Exception) {
-            log.warn("adsb.lol routeset failed for $key: ${e.message}")
-            positiveCache[key]?.second
         }
+        evictIfOversized(now)
+        return route
+    }
+
+    private suspend fun fetchRouteset(key: String, lat: Double?, lng: Double?): FlightRoute? {
+        val body = AdsbLolRouteRequest(
+            planes = listOf(AdsbLolPlaneQuery(key, lat ?: 0.0, lng ?: 0.0))
+        )
+        val response = routesetClient.post()
+            .uri("/api/0/routeset")
+            .bodyValue(body)
+            .retrieve()
+            .awaitBodyOrNull<List<AdsbLolRouteEntry>>()
+
+        val entry = response?.firstOrNull { it.callsign.trim().equals(key, ignoreCase = true) }
+            ?: response?.firstOrNull()
+        return entry?.toFlightRoute()
+    }
+
+    private suspend fun fetchAdsbdb(key: String): FlightRoute? {
+        val route = try {
+            adsbdbClient.get()
+                .uri("/v0/callsign/{callsign}", key)
+                .retrieve()
+                .awaitBodyOrNull<AdsbdbResponse>()
+                ?.response?.flightroute
+        } catch (e: WebClientResponseException.NotFound) {
+            null
+        } ?: return null
+        val dep = route.origin?.iataCode.orEmpty()
+        val arr = route.destination?.iataCode.orEmpty()
+        if (dep.isBlank() || arr.isBlank()) return null
+        return FlightRoute(departureIata = dep, arrivalIata = arr, plausible = true)
     }
 
     private fun AdsbLolRouteEntry.toFlightRoute(): FlightRoute? {
