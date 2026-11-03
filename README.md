@@ -36,8 +36,8 @@
 | **[adsb.lol](https://api.adsb.lol)** | 실시간 항공기 위치 (`/v2/point`, `/v2/callsign`, `/v2/icao`) + Callsign 기반 노선 결정 (`/api/0/routeset`) |
 | **[adsb.fi](https://adsb.fi)** | adsb.lol 장애 시 폴백 (동일 readsb v2 포맷, `/api/v2/*`) |
 | **[hexdb.io](https://hexdb.io)** | ICAO24 기반 항공기 메타데이터 (등록번호, 기종, 운항사) |
-| **[OpenFlights](https://openflights.org/data.html)** | `airports.dat` / `routes.dat` — 공항 좌표·이름 + 항공사 노선 DB |
-| **[benct/iata-utils](https://github.com/benct/iata-utils)** | 항공사 ICAO(3-letter) → IATA(2-letter) 매핑 |
+| **[OpenFlights](https://openflights.org/data.html)** | `airports.dat` / `routes.dat` — 공항 좌표·이름 + 항공사 노선 DB (jar 에 번들) |
+| **[benct/iata-utils](https://github.com/benct/iata-utils)** | 항공사 ICAO(3-letter) → IATA(2-letter) 매핑 (jar 에 번들) |
 
 ### 빌드 & 테스트
 
@@ -82,7 +82,7 @@
 - **Domain Layer** — 순수 도메인 모델과 포트 인터페이스 (외부 의존성 없음)
 - **Application Layer** — 유스케이스 구현, 포트를 통해 외부 어댑터 호출
 - **Adapter Layer (In)** — REST 컨트롤러 (WebFlux)
-- **Adapter Layer (Out)** — 외부 API 클라이언트, OpenFlights 데이터 로더
+- **Adapter Layer (Out)** — 외부 API 클라이언트, 번들된 OpenFlights 데이터 파서
 
 ### 노선(출발/도착) 결정 전략
 
@@ -115,7 +115,8 @@ flight-track/
 │   │   │   │   │   ├── Aircraft.kt                 # AircraftSnapshot/State/Info
 │   │   │   │   │   ├── Airport.kt                  # 공항 도메인 모델
 │   │   │   │   │   ├── Track.kt                    # Track + TrackWaypoint
-│   │   │   │   │   └── FlightRoute.kt              # callsign 기반 노선 결과
+│   │   │   │   │   ├── FlightRoute.kt              # callsign 기반 노선 결과
+│   │   │   │   │   └── GeoTypes.kt                 # Icao24/Coordinates/BoundingBox + 요청·업스트림 예외
 │   │   │   │   └── port/
 │   │   │   │       ├── in/                         # 인바운드 포트 (UseCase)
 │   │   │   │       │   ├── AircraftUseCase.kt      # GetAircraft/Track/AircraftInfo
@@ -131,10 +132,12 @@ flight-track/
 │   │   │   ├── adapter/                            # 어댑터 레이어
 │   │   │   │   ├── in/web/                         # 인바운드 어댑터 (REST)
 │   │   │   │   │   ├── AirportController.kt
+│   │   │   │   │   ├── ApiExceptionHandler.kt      # 에러 응답 {code,message}
 │   │   │   │   │   └── TrackingController.kt
 │   │   │   │   └── out/                            # 아웃바운드 어댑터
 │   │   │   │       ├── adsblol/
 │   │   │   │       │   ├── AdsbAircraftAdapter.kt      # 실시간 위치/경로 (adsb.lol → adsb.fi 폴백)
+│   │   │   │       │   ├── AdsbMapping.kt              # 단위 변환, bbox→원, trace 파싱 (순수 함수)
 │   │   │   │       │   ├── AdsbLolRouteAdapter.kt      # callsign → 노선 lookup
 │   │   │   │       │   └── dto/
 │   │   │   │       │       ├── AdsbLolV2Response.kt    # readsb v2 응답 DTO
@@ -144,17 +147,21 @@ flight-track/
 │   │   │   │       │   └── dto/
 │   │   │   │       │       └── HexDbResponse.kt
 │   │   │   │       └── openflights/
+│   │   │   │           ├── OpenFlightsData.kt          # 번들 데이터 파서 (불변)
 │   │   │   │           └── RouteResolver.kt            # 휴리스틱 노선 추정
 │   │   │   │
 │   │   │   └── config/                             # Spring 설정
+│   │   │       ├── OpenFlightsConfig.kt            # OpenFlightsData 빈
 │   │   │       ├── WebConfig.kt                    # CORS 설정
 │   │   │       └── OpenApiConfig.kt                # Swagger/OpenAPI 설정
 │   │   │
 │   │   └── resources/
-│   │       └── application.yaml                    # 애플리케이션 설정
+│   │       ├── application.yaml                    # 애플리케이션 설정
+│   │       └── openflights/                        # airports.dat, routes.dat, iata_airlines.csv
 │   │
-│   └── test/kotlin/org/shjoo/flighttrack/
-│       └── FlightTrackApplicationTests.kt
+│   └── test/
+│       ├── kotlin/org/shjoo/flighttrack/           # 도메인·어댑터 단위 테스트 + 컨텍스트 로드
+│       └── resources/adsblol/trace_780ad2.json     # 실제 trace 샘플
 └── README.md
 ```
 
@@ -178,16 +185,29 @@ flight-track/
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
+| `GET` | `/api/airports/nearest?lat=..&lng=..` | 좌표 기준 약 2도 이내 가장 가까운 공항 (없으면 404) |
 | `GET` | `/api/airports/{code}` | IATA 공항 코드 단건 조회 (이름·좌표) |
 | `GET` | `/api/tracking/aircraft` | 실시간 항공기 위치 — `callsign` 검색 또는 bounding box (`lamin/lomin/lamax/lomax`) |
 | `GET` | `/api/tracking/aircraft/{icao24}/info` | 항공기 등록번호/기종/운항사 등 상세 메타데이터 |
-| `GET` | `/api/tracking/track?icao24=...` | 현재 위치 waypoint + 추정 출발/도착 공항 (오픈 ADS-B API 특성상 과거 경로는 미제공) |
+| `GET` | `/api/tracking/track?icao24=...` | 현재 비행 구간 경로(globe trace) + 추정 출발/도착 공항 |
+
+### 에러 응답
+
+잘못된 요청과 업스트림 장애는 빈 결과 대신 `{"code": "...", "message": "..."}` 본문으로 응답합니다.
+
+| 상태 | `code` | 경우 |
+|------|--------|------|
+| 400 | `invalid_request` | bbox 일부만 지정/뒤집힘/범위 초과, `icao24` 가 6자리 hex 아님, 필수 파라미터 누락·숫자 아님 |
+| 502 | `upstream_unavailable` | 모든 ADS-B 소스가 실패했고 캐시도 없을 때, hexdb 장애이고 캐시가 없을 때 |
+| 500 | `internal_error` | 그 외 예외 (상세는 서버 로그에만 기록) |
+
+존재하지 않는 경로는 Spring 기본 404 를 그대로 반환합니다.
 
 ## 시작하기
 
 ### 환경 변수
 
-필요 없습니다 — adsb.lol, adsb.fi, hexdb.io 모두 인증 없이 호출됩니다.
+필요 없습니다 — adsb.lol, adsb.fi, hexdb.io 모두 인증 없이 호출됩니다. OpenFlights 데이터(ODbL 라이선스, 출처: [openflights.org](https://openflights.org/data.html))와 항공사 코드표는 `src/main/resources/openflights` 에 번들되어 있어 기동 시 외부 다운로드가 없습니다. 갱신하려면 같은 이름의 파일을 교체합니다.
 
 ### 실행
 
@@ -217,6 +237,9 @@ docker run -p 8080:8080 flight-track
 ```bash
 # 공항 정보 조회
 curl "http://localhost:8080/api/airports/ICN"
+
+# 좌표에서 가장 가까운 공항
+curl "http://localhost:8080/api/airports/nearest?lat=37.46&lng=126.44"
 
 # 콜사인으로 항공기 검색 (KE로 시작하는 모든 항공기)
 curl "http://localhost:8080/api/tracking/aircraft?callsign=KE"
