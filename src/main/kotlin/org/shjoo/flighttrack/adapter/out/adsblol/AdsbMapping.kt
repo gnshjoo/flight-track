@@ -53,7 +53,7 @@ internal fun BoundingBox.toCircle(): Circle {
     return Circle(centerLat, centerLon, radius.toInt().coerceIn(1, MAX_RADIUS_NM))
 }
 
-private fun haversineNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+internal fun haversineNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val dLat = Math.toRadians(lat2 - lat1)
     val dLon = Math.toRadians(lon2 - lon1)
     val a = sin(dLat / 2) * sin(dLat / 2) +
