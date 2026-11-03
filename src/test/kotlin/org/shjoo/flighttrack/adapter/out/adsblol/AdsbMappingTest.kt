@@ -57,10 +57,11 @@ class AdsbMappingTest {
 
     @Test
     fun `trace uses only the last leg`() {
+        // fixture 는 NRT 지상 이동과 순항 사이 2.6시간이 잘려 있어, 그 공백 이후 3점이 마지막 leg 가 된다
         val parsed = assertNotNull(parseTrace(fixture(), fixtureNow))
-        assertEquals(6, parsed.waypoints.size)
-        assertTrue(parsed.waypoints.first().onGround)
-        assertEquals(35.545074, parsed.waypoints.first().latitude, 1e-9)
+        assertEquals(3, parsed.waypoints.size)
+        assertFalse(parsed.waypoints.first().onGround)
+        assertEquals(36.95177, parsed.waypoints.first().latitude, 1e-9)
         assertEquals(36.917313, parsed.waypoints.last().latitude, 1e-9)
         assertEquals(32100 * 0.3048, parsed.waypoints.last().altitude!!, 1e-6)
     }
@@ -98,7 +99,7 @@ class AdsbMappingTest {
     fun `a trace whose last point is older than two hours is discarded`() {
         assertNull(parseTrace(fixture(), nowEpochSeconds = fixtureLastPointTime + 3 * 3600))
         val fresh = assertNotNull(parseTrace(fixture(), nowEpochSeconds = fixtureLastPointTime + 600))
-        assertEquals(6, fresh.waypoints.size)
+        assertEquals(3, fresh.waypoints.size)
         assertEquals(fixtureLastPointTime, fresh.waypoints.last().time)
     }
 

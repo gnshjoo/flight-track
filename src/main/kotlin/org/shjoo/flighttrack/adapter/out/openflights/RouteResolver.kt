@@ -117,16 +117,22 @@ class RouteResolver(private val data: OpenFlightsData) {
         val last = sortedWaypoints.last()
         val heading = last.heading ?: return null
 
-        return destinations
+        val ranked = destinations
             .mapNotNull { dst ->
                 val dstAirport = data.airports[dst] ?: return@mapNotNull null
                 val bearingFromCurrent = calcBearing(last.latitude, last.longitude, dstAirport.lat, dstAirport.lng)
-                val diff = angleDiff(heading, bearingFromCurrent)
-                dst to diff
+                dst to angleDiff(heading, bearingFromCurrent)
             }
-            .minByOrNull { it.second }
-            ?.first
-            ?: destinations[0]
+            .sortedBy { it.second }
+        val best = ranked.firstOrNull() ?: return null
+        val runnerUpDiff = ranked.getOrNull(1)?.second ?: Double.MAX_VALUE
+
+        // 방향이 비슷한 후보끼리는 heading 으로 가를 수 없다 → 틀린 도착지보다 null 이 낫다
+        if (best.second > MAX_HEADING_DIFF_DEG || runnerUpDiff - best.second < MIN_HEADING_MARGIN_DEG) {
+            log.info("Arrival ambiguous from ${depAirport.iata}: $ranked (heading=$heading)")
+            return null
+        }
+        return best.first
     }
 
     fun findNearestAirport(lat: Double, lng: Double, maxDistSq: Double): Airport? {
@@ -162,5 +168,7 @@ class RouteResolver(private val data: OpenFlightsData) {
 
     private companion object {
         const val DEPARTURE_MAX_ALTITUDE_M = 3_000.0
+        const val MAX_HEADING_DIFF_DEG = 20.0
+        const val MIN_HEADING_MARGIN_DEG = 10.0
     }
 }
