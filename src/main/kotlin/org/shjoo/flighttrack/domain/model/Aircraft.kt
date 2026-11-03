@@ -2,7 +2,9 @@ package org.shjoo.flighttrack.domain.model
 
 data class AircraftSnapshot(
     val time: Long,
-    val aircraft: List<AircraftState>
+    val aircraft: List<AircraftState>,
+    val partial: Boolean = false,
+    val servedAt: Double = time.toDouble()
 )
 
 data class AircraftState(
@@ -14,7 +16,8 @@ data class AircraftState(
     val altitude: Double?,
     val velocity: Double?,
     val heading: Double?,
-    val verticalRate: Double?
+    val verticalRate: Double?,
+    val seenAt: Double? = null
 )
 
 data class AircraftInfo(

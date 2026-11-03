@@ -12,7 +12,8 @@ data class AdsbLolV2Response(
     val now: Double = 0.0
 ) {
     val states: List<AdsbLolAircraft>? get() = ac ?: aircraft
-    val epochSeconds: Long get() = if (now > 1e12) (now / 1000).toLong() else now.toLong()
+    val nowSeconds: Double get() = if (now > 1e12) now / 1000 else now
+    val epochSeconds: Long get() = nowSeconds.toLong()
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -28,5 +29,7 @@ data class AdsbLolAircraft(
     @JsonProperty("baro_rate") val baroRate: Double? = null,
     @JsonProperty("geom_rate") val geomRate: Double? = null,
     val lat: Double? = null,
-    val lon: Double? = null
+    val lon: Double? = null,
+    // 응답 시각(now) 기준 위치 수신 후 경과 초
+    @JsonProperty("seen_pos") val seenPos: Double? = null
 )

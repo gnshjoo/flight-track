@@ -26,7 +26,7 @@ internal const val TRACE_LEG_GAP_MAX_KMH = 200.0
 private const val NM_TO_KM = 1.852
 private const val EARTH_RADIUS_NM = 3440.065
 
-internal fun AdsbLolAircraft.toState(): AircraftState? {
+internal fun AdsbLolAircraft.toState(nowSeconds: Double): AircraftState? {
     val latitude = lat ?: return null
     val longitude = lon ?: return null
     if (altBaro == "ground") return null
@@ -39,7 +39,8 @@ internal fun AdsbLolAircraft.toState(): AircraftState? {
         altitude = (altBaro as? Number)?.toDouble()?.times(FT_TO_M),
         velocity = gs?.times(KT_TO_MS),
         heading = track,
-        verticalRate = (baroRate ?: geomRate)?.times(FPM_TO_MS)
+        verticalRate = (baroRate ?: geomRate)?.times(FPM_TO_MS),
+        seenAt = seenPos?.let { nowSeconds - it }
     )
 }
 

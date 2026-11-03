@@ -112,7 +112,7 @@ class AdsbAircraftAdapter(
         val key = callsign.trim().uppercase()
 
         val exact = getWithFallback { it.callsignPath(key) }
-        val exactStates = exact?.states.orEmpty().mapNotNull { it.toState() }
+        val exactStates = exact?.let { r -> r.states.orEmpty().mapNotNull { it.toState(r.nowSeconds) } }.orEmpty()
         if (exactStates.isNotEmpty()) {
             return AircraftSnapshot(time = exact!!.epochSeconds, aircraft = exactStates)
         }
@@ -233,7 +233,7 @@ class AdsbAircraftAdapter(
             ?: return snapshotCache[cacheKey]?.second
                 ?: throw UpstreamUnavailableException("adsb")
 
-        val aircraft = response.states.orEmpty().mapNotNull { it.toState() }
+        val aircraft = response.states.orEmpty().mapNotNull { it.toState(response.nowSeconds) }
         val result = AircraftSnapshot(
             time = if (response.epochSeconds > 0) response.epochSeconds else now / 1000,
             aircraft = aircraft

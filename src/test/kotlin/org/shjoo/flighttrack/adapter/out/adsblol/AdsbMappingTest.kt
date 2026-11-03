@@ -3,6 +3,7 @@ package org.shjoo.flighttrack.adapter.out.adsblol
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolAircraft
+import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbLolV2Response
 import org.shjoo.flighttrack.adapter.out.adsblol.dto.AdsbTraceResponse
 import org.shjoo.flighttrack.domain.model.BoundingBox
 import kotlin.test.Test
@@ -27,7 +28,7 @@ class AdsbMappingTest {
     fun `altitude feet and speed knots convert to metres and metres per second`() {
         val state = AdsbLolAircraft(
             hex = "abc123", flight = "KAL1  ", altBaro = 10_000, gs = 100.0, baroRate = 1000.0, lat = 37.0, lon = 127.0
-        ).toState()
+        ).toState(nowSeconds = 1_000.0)
         assertNotNull(state)
         assertEquals("KAL1", state.callsign)
         assertEquals(3048.0, state.altitude!!, 1e-6)
@@ -37,8 +38,30 @@ class AdsbMappingTest {
 
     @Test
     fun `ground aircraft and aircraft without a position are omitted from snapshots`() {
-        assertNull(AdsbLolAircraft(hex = "a", altBaro = "ground", lat = 37.0, lon = 127.0).toState())
-        assertNull(AdsbLolAircraft(hex = "b", altBaro = 5000, lat = null, lon = 127.0).toState())
+        assertNull(AdsbLolAircraft(hex = "a", altBaro = "ground", lat = 37.0, lon = 127.0).toState(1_000.0))
+        assertNull(AdsbLolAircraft(hex = "b", altBaro = 5000, lat = null, lon = 127.0).toState(1_000.0))
+    }
+
+    @Test
+    fun `seenAt is the response time minus seen_pos`() {
+        val state = AdsbLolAircraft(hex = "a", altBaro = 30_000, lat = 37.0, lon = 127.0, seenPos = 2.5).toState(nowSeconds = 1_762_160_004.0)
+        assertEquals(1_762_160_001.5, state!!.seenAt!!, 1e-9)
+    }
+
+    @Test
+    fun `seenAt is null when the feed omits seen_pos`() {
+        assertNull(AdsbLolAircraft(hex = "a", altBaro = 30_000, lat = 37.0, lon = 127.0).toState(1_762_160_004.0)!!.seenAt)
+    }
+
+    @Test
+    fun `adsb_fi seconds and adsb_lol millis give the same seenAt`() {
+        val record = """{"hex":"71be1d","alt_baro":30000,"lat":37.0,"lon":127.0,"seen_pos":1.2}"""
+        val lol = jacksonObjectMapper().readValue<AdsbLolV2Response>("""{"now":1762160004300,"ac":[$record]}""")
+        val fi = jacksonObjectMapper().readValue<AdsbLolV2Response>("""{"now":1762160004.3,"aircraft":[$record]}""")
+        val lolSeenAt = lol.states!!.single().toState(lol.nowSeconds)!!.seenAt!!
+        val fiSeenAt = fi.states!!.single().toState(fi.nowSeconds)!!.seenAt!!
+        assertEquals(1_762_160_003.1, lolSeenAt, 1e-3)
+        assertEquals(1_762_160_003.1, fiSeenAt, 1e-3)
     }
 
     @Test
