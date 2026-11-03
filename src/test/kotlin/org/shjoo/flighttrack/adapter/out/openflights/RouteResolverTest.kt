@@ -46,4 +46,15 @@ class RouteResolverTest {
         assertEquals("Incheon International Airport", resolver.getAirport("icn")?.name)
         assertNull(resolver.getAirport("XXX"))
     }
+
+    @Test
+    fun `nearest airport returns null outside the search radius`() {
+        assertNull(resolver.findNearestAirport(0.0, -150.0, 4.0))
+    }
+
+    @Test
+    fun `nearest airport for Incheon coordinates is ICN`() {
+        val bundled = RouteResolver(OpenFlightsData.loadBundled())
+        assertEquals("ICN", bundled.findNearestAirport(37.46, 126.44, 4.0)?.iata)
+    }
 }
